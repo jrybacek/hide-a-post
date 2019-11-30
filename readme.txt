@@ -1,44 +1,53 @@
-=== Internet Defense League Cat Signal ===
-Contributors: jazzs3quence
-Donate link: https://www.paypal.me/jazzsequence
-Tags: internet defense league, activism, cat signal, freedom, online activism
-Requires at least: 2.7
-Tested up to: 5.0
-Stable tag: 1.1.3
+=== Hide Posts and Pages by Category ===
+Contributors: jrybacek
+Donate link: https://www.paypal.me/jrybacek
+Tags: hide, posts, category, tabletop gaming, pathfinder
+Requires at least: 5.0
+Tested up to: 5.3
+Stable tag: 1.0
 
-A WordPress plugin to automatically load either the modal or the banner Cat Signal when there is an active campaign from the Internet Defense League.
+A WordPress plugin to hide posts and pages from non-administrators by category.
 
 == Description ==
 
-The [Internet Defense League](https://internetdefenseleague.org) is an online activist group organized to defend your online freedoms. When a bill is threatening to pass that would inhibit the way you live your online life, they put up the Cat Signal, a way to collectively black out or put notices on a large number of websites simultaneously.
+This plugin enables Editors to see only their content and categorized content.  Uncategorized posts from Administrators do not show up for Editors.
 
-This plugin adds the javascript for the Cat Signal to your site so you don't need to mess with the code. It's enqueued like any other javascript file and has an options page to select either the banner or the modal window option.
+=== Hide A Post Settings ===
 
-= Events Supported =
+Typed in the categories that I don't want to have seen:
 
-Some of the events supported by this plugin:
+ Awesome, Spicy
 
-* [Internet Slowdown](https://www.battleforthenet.com/sept10th/) - 10 September, 2014
-* [Save Net Neutrality](https://www.battleforthenet.com/july12/) - 12 July, 2017
+=== Example Posts (seen from Administrators) ===
+
+1. Tomato (Owner: Administrator, Categories: Fruit, Red)
+2. Potato (Owner: Administrator, Categories: Vegetable, White)
+3. Broccoli (Owner: Administrator, Categories: Vegetable, Green)
+4. Mushrooms (Owner: Administrator, Categories: Vegetable, White, Awesome) - This is a post, I want to hide from other non-Administrators based on the "Awesome" category.
+5. Apple (Owner: Administrator, Catgories: Fruit, Red)
+6. Pear (Owner: Administrator, Categories: Fruit, Green, Awesome) - This is a post, I want to hide from other non-Administrators based on the "Awesome" category.
+7. Peppers (Owner: Administrator, Categories: Vegetable, Green, Spicy) - This is a post, I want to hide from other non-Administrators based on the "Spicy" category.
+8. Peach (Owner: Administrator, Categories: Uncategorized) - I've just started creating this post as an Administrator
+9. Blueberries (Owner: Administrator, Categories: Fruit, Blue, Uncategorized) - Even thought I've started adding categories to this post, it won't show up based on the "Uncategorized" category.
+10. Raspberries (Owner: Editor, Categories: Fruit, Red, Awesome) - Since I'm an administrator, I can still see this post, even though its in the "Awesome" category.
+
+=== Example Posts (seen from Editors) ===
+
+1. Tomato (Owner: Administrator, Categories: Fruit, Red)
+2. Potato (Owner: Administrator, Categories: Vegetable, White)
+3. Broccoli (Owner: Administrator, Categories: Vegetable, Green)
+5. Apple (Owner: Administrator, Catgories: Fruit, Red)
+10. Raspberries (Owner: Editor, Categories: Fruit, Red, Awesome) - Since I'm an administrator, I can still see this post, even though its in the "Awesome" category.
 
 = About the plugin =
 
-At first glance, it may appear that the plugin isn't doing anything because you don't have a banner or a modal window. *Don't panic!!!* What this means is that all is safe in Gotham and the Cat Signal has not been activated (read: there probably isn't an active IDL campaign running). To keep up to date on Internet Defense League campaigns, I recommend signing up for their mailing list (ed. note: I'm not affiliated with them at all, I'm just your friendly neighborhood internet activist). Once you're on the list, you'll get emails when they're about to launch a campaign.
+We wanted to use WordPress with our tabletop gaming group.  This enables us to all collaborate on content creation, while enabling the dungeon master to retain some "secrets".
 
 == FAQ ==
 
-**This plugin isn't updated often. Did you abandon it?**
+**Why did you create this?**
 
-This plugin is a very simple implementation of the javascript code provided by the Internet Defense League to add their campaigns to your site when they go out. It does one thing — load the javascript — and nothing else. The actual code required to load said javascript from the IDL hasn’t changed, so there has been no need to update this plugin — as long as their code remains the same, this plugin will still work.
-
-The Cat Signal plugin is what could be considered [“complete software”](https://engineering.hmn.md/how-we-work/philosophy/completion/). There’s nothing else that needs to be done. There are no new features it needs, it does only one thing and nothing else, it’s just done. The only thing that I would be doing with each update is editing the readme file to change the version of WordPress it’s been tested up to and that’s not particularly high on my list of priorities, unfortunately.
-
-**How do I know if it's working?**
-
-If you're savvy, you can check the HTML source of your site and check that either the `modal.js` is loading. If it is, you're good to go, and the banner or modal window will work automagically when the IDL launch a new campaign.
-
-The `?_idl_test=1` test URL is no longer supported, sadly.
-
+So tired of using 15 plugins to achieve something very simple.
 
 == Installation ==
 
@@ -50,60 +59,7 @@ Extract the zip file and just drop the contents in the wp-content/plugins/ direc
 
 2. Options page
 
-== Upgrade Notice ==
-
-= 1.1.3 =
-- Removed support for banner option (does not appear to be used anymore).
-
 == Changelog ==
-
-= 1.1.3 =
-- Tested on WordPress 5.0
-- Removed banner option (no longer used)
-- Updated modal javascript
-
-= 1.1.2 =
-- Compatibility bump
-- Added FAQ
-- Remove http check from js code
-- Tweaked js
-- Updated readmes
-
-= 1.1.1 =
-- version bump, no major changes
-
-= 1.1 =
-- removed Stop the Secrecy option
-- removed the idl_test (temporarily, see [developer thread](https://groups.google.com/d/msg/internetdefenseleague/7OWDjdEDwJ0/HX1MBpjnbr8J))
-- tested with WordPress 4.0
-- added plugin icon
-
-= 1.0.9 =
-- fixed the fatal error on activation for PHP < 5.3
-
-= 1.0.8 =
-- added widget for [Stop the Secrecy](https://openmedia.org/stopthesecrecy/resources) campaign. May be used later for other campaigns.
-
-= 1.0.6 =
-- fixed banner/modal bug (saved option was getting stripped in the validation function)
-- moved IDL banner locally
-
-= 1.0.5 =
-- fixes validation `_doing_it_wrong()`
-
-= 1.0.4 =
-- Fixed open `<div>` tag
-- added an option to define where the alert appears
-- added link to test that the script is working
-
-= 1.0.3 =
-- Removed `die` function that was making the page quit if no option was set. Reported [here](http://wordpress.org/support/topic/not-working-on-my-site-3) and [here](http://wordpress.org/support/topic/indexphp-quits-after-wordpress-meta-tag).
-
-= 1.0.2 =
-- Changed how the validation pulled the options
-
-= 1.0.1 =
-- Added validation function
 
 = 1.0 =
 - Initial release.
