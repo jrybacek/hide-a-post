@@ -1,4 +1,4 @@
-=== Hide Posts and Pages by Category ===
+=== Hide Posts by Category ===
 Contributors: jrybacek
 Donate link: https://www.paypal.me/jrybacek
 Tags: hide, posts, category, tabletop gaming, pathfinder
@@ -6,7 +6,7 @@ Requires at least: 5.0
 Tested up to: 5.3
 Stable tag: 1.0
 
-A WordPress plugin to hide posts and pages from non-administrators by category.
+A WordPress plugin to hide posts from non-administrators by category.
 
 == Description ==
 
