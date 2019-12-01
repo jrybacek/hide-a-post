@@ -55,12 +55,9 @@ Extract the zip file and just drop the contents in the wp-content/plugins/ direc
 
 ## Screenshots
 
-![Example Posts as an Administrator](https://github.com/jrybacek/hide-a-post/raw/master/images/screenshot-1.png)  
-1. Posts as an Administrator
-![Example Posts as an Editor](https://github.com/jrybacek/hide-a-post/raw/master/images/screenshot-2.png)  
-2. Posts as an Editor
-![Hide A Post settings](https://github.com/jrybacek/hide-a-post/raw/master/images/screenshot-3.png)  
-3. Hide A Post settings page
+1. Posts as an Administrator ![Example Posts as an Administrator](https://github.com/jrybacek/hide-a-post/raw/master/images/screenshot-1.png)  
+2. Posts as an Editor ![Example Posts as an Editor](https://github.com/jrybacek/hide-a-post/raw/master/images/screenshot-2.png)  
+3. Hide A Post settings page ![Hide A Post settings](https://github.com/jrybacek/hide-a-post/raw/master/images/screenshot-3.png)  
 
 ## Changelog
 **1.1**
