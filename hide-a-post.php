@@ -139,40 +139,38 @@ function hap_options_categories_to_name($input) {
 	return implode( ', ', $input );
 }
 
-add_filter( 'posts_join', 'hap_posts_join', 10, 2 );
-add_filter( 'posts_where', 'hap_posts_where', 10, 2 );
+add_filter('posts_distinct', 'hap_posts_distinct', 10);
+add_filter('posts_where', 'hap_posts_where', 10, 2);
 
-function hap_posts_join($join, $query) {
-	global $hap_options, $pagenow, $wpdb;
-	if(count($hap_options['categories']) > 0) {
-		$user_id = get_current_user_id();
-		$user_meta = get_userdata($user_id);
-		$user_roles = $user_meta->roles;
-		if (!in_array('administrator', $user_roles)) {
-			$join .= " LEFT JOIN $wpdb->term_relationships as wtr ON ($wpdb->posts.ID = wtr.object_id) ";
-			$join .= " LEFT JOIN $wpdb->term_taxonomy as wtt ON (wtr.term_taxonomy_id = wtt.term_taxonomy_id) ";
-			$join .= " LEFT JOIN $wpdb->terms as wt ON(wtt.term_id = wt.term_id) ";
-		}
-	}
-	return $join;
+function hap_posts_distinct() {
+	return 'DISTINCT';
 }
 
 function hap_posts_where($where, $query) {
   global $hap_options, $pagenow;
 	if(count($hap_options['categories']) > 0) {
-		$user_id = get_current_user_id();
-		$user_meta = get_userdata($user_id);
-		$user_roles = $user_meta->roles;
-		if (!in_array('administrator', $user_roles)) {
-			$where .= " AND NOT (wp_posts.post_author IN (1) AND wtt.taxonomy IN ('category') AND wt.name = 'Uncategorized')";
+		if(!current_user_can('administrator')) {
+			$uncategorized_id = get_cat_id('Uncategorized');
+			if($uncategorized_id > 0) {
+				$administrators = get_users(['role__in' => ['administrator']]);
+				foreach($administrators as $user) {
+					$admin_ids[]= $user->ID;
+				}
+				$where .= " AND id NOT IN (
+SELECT id
+FROM wp_posts
+LEFT JOIN wp_term_relationships as wtr ON (wp_posts.ID = wtr.object_id)
+LEFT JOIN wp_term_taxonomy as wtt ON (wtr.term_taxonomy_id = wtt.term_taxonomy_id)
+WHERE 1=1 AND wp_posts.post_type = 'post' AND (wp_posts.post_status = 'publish' OR wp_posts.post_status = 'future' OR wp_posts.post_status = 'draft' OR wp_posts.post_status = 'pending' OR wp_posts.post_status = 'private')
+AND wp_posts.post_author IN (" . implode(',', $admin_ids) . ") AND wtt.taxonomy = 'category' AND wtt.term_id = " . $uncategorized_id . ")";
+			}
 			$where .= " AND id NOT IN (
 SELECT id
 FROM wp_posts
 LEFT JOIN wp_term_relationships as wtr ON (wp_posts.ID = wtr.object_id)
 LEFT JOIN wp_term_taxonomy as wtt ON (wtr.term_taxonomy_id = wtt.term_taxonomy_id)
-LEFT JOIN wp_terms as wt ON(wtt.term_id = wt.term_id)
 WHERE 1=1 AND wp_posts.post_type = 'post' AND (wp_posts.post_status = 'publish' OR wp_posts.post_status = 'future' OR wp_posts.post_status = 'draft' OR wp_posts.post_status = 'pending' OR wp_posts.post_status = 'private')
-AND wtt.taxonomy IN ('category') AND wt.term_id IN (" . implode( ',', $hap_options['categories']) . "))";
+AND wtt.taxonomy = 'category' AND wtt.term_id IN (" . implode(',', $hap_options['categories']) . "))";
 		}
 	}
 	return $where;

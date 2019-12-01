@@ -4,7 +4,7 @@ Donate link: https://www.paypal.me/jrybacek
 Tags: hide, posts, category, tabletop gaming, pathfinder
 Requires at least: 5.0
 Tested up to: 5.3
-Stable tag: 1.0
+Stable tag: 1.1
 
 A WordPress plugin to hide posts from non-administrators by category.
 
@@ -60,6 +60,10 @@ Extract the zip file and just drop the contents in the wp-content/plugins/ direc
 2. Options page
 
 == Changelog ==
+= 1.1 =
+- Enhanced code to allow for more than one administrator
+- Improved poorly written SQL statements
+- Fixed bug duplicate posts being displayed
 
 = 1.0 =
 - Initial release.
