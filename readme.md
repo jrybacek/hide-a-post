@@ -1,4 +1,4 @@
-![hide_a_post](https://github.com/jrybacek/hide-a-post/raw/master/images/logo.png)
+![Hide A Post logo](https://github.com/jrybacek/hide-a-post/raw/master/images/logo.png)
 # Hide Posts by Category
 
 Contributors: jrybacek
@@ -18,28 +18,28 @@ This plugin enables Editors to see only their content and categorized content.  
 
 Typed in the categories that I don't want to have seen:
 
- Awesome, Spicy
+    Awesome, Spicy
 
 ### Example Posts (seen from Administrators)
 
-1. Tomato (Owner: Administrator, Categories: Fruit, Red)
-2. Potato (Owner: Administrator, Categories: Vegetable, White)
-3. Broccoli (Owner: Administrator, Categories: Vegetable, Green)
-4. Mushrooms (Owner: Administrator, Categories: Vegetable, White, Awesome) - This is a post, I want to hide from other non-Administrators based on the "Awesome" category.
-5. Apple (Owner: Administrator, Catgories: Fruit, Red)
-6. Pear (Owner: Administrator, Categories: Fruit, Green, Awesome) - This is a post, I want to hide from other non-Administrators based on the "Awesome" category.
-7. Peppers (Owner: Administrator, Categories: Vegetable, Green, Spicy) - This is a post, I want to hide from other non-Administrators based on the "Spicy" category.
-8. Peach (Owner: Administrator, Categories: Uncategorized) - I've just started creating this post as an Administrator
-9. Blueberries (Owner: Administrator, Categories: Fruit, Blue, Uncategorized) - Even thought I've started adding categories to this post, it won't show up based on the "Uncategorized" category.
-10. Raspberries (Owner: Editor, Categories: Fruit, Red, Awesome) - Since I'm an administrator, I can still see this post, even though its in the "Awesome" category.
+* Tomato (Owner: Administrator, Categories: Fruit, Red)
+* Potato (Owner: Administrator, Categories: Vegetable, White)
+* Broccoli (Owner: Administrator, Categories: Vegetable, Green)
+* Mushrooms (Owner: Administrator, Categories: Vegetable, White, Awesome) - This is a post, I want to hide from other non-Administrators based on the "Awesome" category.
+* Apple (Owner: Administrator, Catgories: Fruit, Red)
+* Pear (Owner: Administrator, Categories: Fruit, Green, Awesome) - This is a post, I want to hide from other non-Administrators based on the "Awesome" category.
+* Peppers (Owner: Administrator, Categories: Vegetable, Green, Spicy) - This is a post, I want to hide from other non-Administrators based on the "Spicy" category.
+* Peach (Owner: Administrator, Categories: Uncategorized) - I've just started creating this post as an Administrator
+* Blueberries (Owner: Administrator, Categories: Fruit, Blue, Uncategorized) - Even thought I've started adding categories to this post, it won't show up based on the "Uncategorized" category.
+* Raspberries (Owner: Editor, Categories: Fruit, Red, Awesome) - Since I'm an administrator, I can still see this post, even though its in the "Awesome" category.
 
 ### Example Posts (seen from Editors)
 
-1. Tomato (Owner: Administrator, Categories: Fruit, Red)
-2. Potato (Owner: Administrator, Categories: Vegetable, White)
-3. Broccoli (Owner: Administrator, Categories: Vegetable, Green)
-5. Apple (Owner: Administrator, Catgories: Fruit, Red)
-10. Raspberries (Owner: Editor, Categories: Fruit, Red, Awesome) - Since I'm an administrator, I can still see this post, even though its in the "Awesome" category.
+* Tomato (Owner: Administrator, Categories: Fruit, Red)
+* Potato (Owner: Administrator, Categories: Vegetable, White)
+* Broccoli (Owner: Administrator, Categories: Vegetable, Green)
+* Apple (Owner: Administrator, Catgories: Fruit, Red)
+* Raspberries (Owner: Editor, Categories: Fruit, Red, Awesome) - Since I'm an administrator, I can still see this post, even though its in the "Awesome" category.
 
 ### About this plugin
 
@@ -55,11 +55,12 @@ Extract the zip file and just drop the contents in the wp-content/plugins/ direc
 
 ## Screenshots
 
-![modal window](https://github.com/jrybacek/hide-a-post/raw/master/images/screenshot-1.png)  
-1. Modal option
-
-![options page](https://github.com/jrybacek/hide-a-post/raw/master/images/screenshot-2.png)  
-2. Options page
+![Example Posts as an Administrator](https://github.com/jrybacek/hide-a-post/raw/master/images/screenshot-1.png)  
+1. Posts as an Administrator
+![Example Posts as an Editor](https://github.com/jrybacek/hide-a-post/raw/master/images/screenshot-2.png)  
+2. Posts as an Editor
+![Hide A Post settings](https://github.com/jrybacek/hide-a-post/raw/master/images/screenshot-3.png)  
+3. Hide A Post settings page
 
 ## Changelog
 **1.1**
