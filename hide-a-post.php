@@ -3,7 +3,7 @@
  * Plugin Name: Hide A Post 
  * Plugin URI: https://github.com/jrybacek/hide-a-post/
  * Description: WordPress plugin that hides posts on the site, search, and WordPress admin from non-Administrators using one or more categories.
- * Version: 0.1
+ * Version: 1.1
  * Author: Joe Rybacek
  * Author URI: https://github.com/jrybacek
  */
