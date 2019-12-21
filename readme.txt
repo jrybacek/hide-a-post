@@ -59,7 +59,7 @@ Extract the zip file and just drop the contents in the wp-content/plugins/ direc
 
 2. Options page
 
-== Changelog ==
+== Upgrade Notice ==
 = 1.1 =
 - Enhanced code to allow for more than one administrator
 - Improved poorly written SQL statements
