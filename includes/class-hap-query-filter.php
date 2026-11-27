@@ -102,6 +102,9 @@ final class HAP_Query_Filter {
 		add_filter( 'wp_navigation_should_create_fallback', array( $this, 'filter_navigation_fallback_creation' ) );
 		add_filter( 'render_block_core/navigation-link', array( $this, 'filter_navigation_link_block' ), 10, 2 );
 		add_filter( 'render_block_core/navigation-submenu', array( $this, 'filter_navigation_submenu_block' ), 10, 3 );
+		add_filter( 'block_core_navigation_render_inner_blocks', array( $this, 'redact_navigation_inner_blocks' ) );
+		add_filter( 'render_block_data', array( $this, 'redact_top_level_submenu_data' ) );
+		add_filter( 'register_block_type_args', array( $this, 'wrap_navigation_render_callback' ), 10, 2 );
 		add_action( 'load-edit-comments.php', array( $this, 'guard_post_comments_screen' ) );
 		add_action( 'load-edit.php', array( $this, 'limit_empty_trash_to_visible_posts' ) );
 		add_filter( 'oembed_request_post_id', array( $this, 'filter_requested_post_id' ) );
@@ -506,11 +509,125 @@ final class HAP_Query_Filter {
 			return '';
 		}
 
-		$parsed          = $instance->parsed_block;
-		$parsed['attrs'] = $this->redact_navigation_attrs( $attrs );
-		$redacted        = new WP_Block( $parsed, is_array( $instance->context ) ? $instance->context : array() );
+		// Redact every hidden submenu in the subtree at once, so the copy renders
+		// a single time without triggering further re-renders below it.
+		$redacted = new WP_Block( $this->redact_hidden_submenus( $instance->parsed_block ), is_array( $instance->context ) ? $instance->context : array() );
 
 		return (string) $redacted->render();
+	}
+
+	/**
+	 * Redacts hidden-post Navigation Submenu blocks before the Navigation block
+	 * renders its items, so each item renders once.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param mixed $inner_blocks Navigation inner blocks (WP_Block_List).
+	 * @return mixed
+	 */
+	public function redact_navigation_inner_blocks( $inner_blocks ) {
+		if ( $inner_blocks instanceof WP_Block_List ) {
+			$this->redact_block_list( $inner_blocks );
+		}
+
+		return $inner_blocks;
+	}
+
+	/**
+	 * Redacts hidden-post submenus in a top-level Navigation Submenu block's
+	 * tree before it is built, so render_block() renders it once.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param array<string, mixed> $parsed_block Parsed block.
+	 * @return array<string, mixed>
+	 */
+	public function redact_top_level_submenu_data( $parsed_block ) {
+		if ( is_array( $parsed_block ) && isset( $parsed_block['blockName'] ) && 'core/navigation-submenu' === $parsed_block['blockName'] ) {
+			return $this->redact_hidden_submenus( $parsed_block );
+		}
+
+		return $parsed_block;
+	}
+
+	/**
+	 * Wraps the Navigation block's render callback so a `ref` that points at a
+	 * hidden post (core does not check that `ref` is a `wp_navigation` post)
+	 * renders nothing, including through the REST block renderer.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param array<string, mixed> $args       Block type registration arguments.
+	 * @param string               $block_type Block type name.
+	 * @return array<string, mixed>
+	 */
+	public function wrap_navigation_render_callback( $args, $block_type ) {
+		if ( 'core/navigation' !== $block_type || ! is_array( $args ) || ! isset( $args['render_callback'] ) || ! is_callable( $args['render_callback'] ) ) {
+			return $args;
+		}
+
+		$original                = $args['render_callback'];
+		$args['render_callback'] = function ( $attributes, $content = '', $block = null ) use ( $original ) {
+			if ( is_array( $attributes ) && isset( $attributes['ref'] ) && $this->is_hidden_for_current_user( $this->to_id( $attributes['ref'] ) ) ) {
+				return '';
+			}
+
+			return call_user_func( $original, $attributes, $content, $block );
+		};
+
+		return $args;
+	}
+
+	/**
+	 * Recursively redacts hidden-post submenus in a WP_Block_List in place.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param WP_Block_List $block_list Block list.
+	 * @return void
+	 */
+	private function redact_block_list( WP_Block_List $block_list ) {
+		foreach ( $block_list as $block ) {
+			if ( ! ( $block instanceof WP_Block ) ) {
+				continue;
+			}
+
+			$attrs = isset( $block->parsed_block['attrs'] ) && is_array( $block->parsed_block['attrs'] ) ? $block->parsed_block['attrs'] : array();
+			if ( 'core/navigation-submenu' === $block->name && $this->is_hidden_navigation_target( $attrs ) ) {
+				$block->parsed_block['attrs'] = $this->redact_navigation_attrs( $attrs );
+				// WP_Block computes `attributes` lazily from parsed_block on next access.
+				unset( $block->attributes );
+			}
+
+			if ( $block->inner_blocks instanceof WP_Block_List ) {
+				$this->redact_block_list( $block->inner_blocks );
+			}
+		}
+	}
+
+	/**
+	 * Returns a parsed block with every hidden-post submenu in its tree redacted.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param array<string, mixed> $block Parsed block.
+	 * @return array<string, mixed>
+	 */
+	private function redact_hidden_submenus( array $block ) {
+		$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : array();
+		if ( isset( $block['blockName'] ) && 'core/navigation-submenu' === $block['blockName'] && $this->is_hidden_navigation_target( $attrs ) ) {
+			$block['attrs'] = $this->redact_navigation_attrs( $attrs );
+		}
+
+		if ( ! empty( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) ) {
+			foreach ( $block['innerBlocks'] as $index => $child ) {
+				if ( is_array( $child ) ) {
+					$block['innerBlocks'][ $index ] = $this->redact_hidden_submenus( $child );
+				}
+			}
+		}
+
+		return $block;
 	}
 
 	/**

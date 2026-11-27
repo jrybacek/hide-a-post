@@ -911,6 +911,99 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 	}
 
 	/**
+	 * A Navigation block whose `ref` is a hidden post renders nothing, including
+	 * through the REST block renderer.
+	 *
+	 * @return void
+	 */
+	public function test_navigation_ref_to_hidden_post_renders_nothing() {
+		wp_update_post(
+			array(
+				'ID'           => $this->posts['admin_secret'],
+				'post_content' => '<!-- wp:paragraph --><p>SecretBody</p><!-- /wp:paragraph -->',
+			)
+		);
+
+		$markup = '<!-- wp:navigation {"ref":' . $this->posts['admin_secret'] . '} /-->';
+		$this->assertStringNotContainsString( 'SecretBody', do_blocks( $markup ) );
+
+		wp_set_current_user( $this->editor_id );
+		$request = new WP_REST_Request( 'POST', '/wp/v2/block-renderer/core/navigation' );
+		$request->set_param( 'context', 'edit' );
+		$request->set_param( 'attributes', array( 'ref' => $this->posts['admin_secret'] ) );
+		$response = rest_do_request( $request );
+
+		$this->assertSame( 200, $response->get_status() );
+		$this->assertStringNotContainsString( 'SecretBody', (string) $response->get_data()['rendered'] );
+		$this->assertStringNotContainsString( 'HAP admin_secret', (string) $response->get_data()['rendered'] );
+	}
+
+	/**
+	 * Redacting nested hidden submenus adds no rendering work, inside a Navigation
+	 * block or when submenus are rendered standalone.
+	 *
+	 * Core itself renders a submenu's children more than once per level, so the
+	 * baseline is the same structure pointing at a visible post.
+	 *
+	 * @return void
+	 */
+	public function test_nested_hidden_submenus_do_not_multiply_rendering() {
+		$build = function ( $submenu_target ) {
+			$markup = sprintf(
+				'<!-- wp:navigation-link {"label":"Leaf","type":"post","kind":"post-type","id":%1$d,"url":"%2$s"} /-->',
+				$this->posts['admin_public'],
+				get_permalink( $this->posts['admin_public'] )
+			);
+			for ( $depth = 0; $depth < 5; $depth++ ) {
+				$markup = sprintf(
+					'<!-- wp:navigation-submenu {"label":"Level%1$d","type":"post","kind":"post-type","id":%2$d} -->%3$s<!-- /wp:navigation-submenu -->',
+					$depth,
+					$submenu_target,
+					$markup
+				);
+			}
+			return $markup;
+		};
+
+		$renders = 0;
+		$counter = static function ( $content, $block ) use ( &$renders ) {
+			if ( isset( $block['attrs']['label'] ) && 'Leaf' === $block['attrs']['label'] ) {
+				++$renders;
+			}
+			return $content;
+		};
+		$count   = function ( $markup, $in_navigation ) use ( &$renders ) {
+			$renders = 0;
+			if ( $in_navigation ) {
+				$nav_id = self::factory()->post->create(
+					array(
+						'post_type'    => 'wp_navigation',
+						'post_status'  => 'publish',
+						'post_content' => $markup,
+					)
+				);
+				$markup = '<!-- wp:navigation {"ref":' . $nav_id . '} /-->';
+			}
+			$html = do_blocks( $markup );
+			return array( $renders, $html );
+		};
+
+		add_filter( 'render_block_core/navigation-link', $counter, 5, 2 );
+
+		list( $baseline_inside ) = $count( $build( $this->posts['admin_public'] ), true );
+		list( $baseline_alone )  = $count( $build( $this->posts['admin_public'] ), false );
+		list( $inside, $html )   = $count( $build( $this->posts['admin_secret'] ), true );
+		list( $alone )           = $count( $build( $this->posts['admin_secret'] ), false );
+
+		remove_filter( 'render_block_core/navigation-link', $counter, 5 );
+
+		$this->assertStringContainsString( 'Leaf', $html );
+		$this->assertStringNotContainsString( 'Level0', $html );
+		$this->assertSame( $baseline_inside, $inside );
+		$this->assertSame( $baseline_alone, $alone );
+	}
+
+	/**
 	 * A visitor's page load never converts the classic menu into a saved (filtered)
 	 * Navigation post; an Administrator's does, with complete data.
 	 *
