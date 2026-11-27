@@ -218,7 +218,12 @@ final class HAP_Settings {
 		$invalid_items  = array();
 
 		if ( is_string( $raw_categories ) ) {
-			$parts = array_filter( array_map( 'trim', explode( ',', sanitize_text_field( $raw_categories ) ) ), 'strlen' );
+			$parts = array_filter(
+				array_map( 'trim', explode( ',', sanitize_text_field( $raw_categories ) ) ),
+				static function ( $part ) {
+					return '' !== $part;
+				}
+			);
 
 			foreach ( $parts as $category_name ) {
 				$term = get_term_by( 'name', $category_name, 'category' );
