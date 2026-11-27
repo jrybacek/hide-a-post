@@ -701,14 +701,100 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 		$_REQUEST['p'] = (string) $this->posts['editor_public'];
 		do_action( 'load-edit-comments.php' );
 
-		$_REQUEST['p'] = (string) $this->posts['admin_secret'];
-		try {
-			do_action( 'load-edit-comments.php' );
-			$this->fail( 'Expected wp_die().' );
-		} catch ( WPDieException $e ) {
-			$this->assertStringContainsString( 'not allowed', $e->getMessage() );
-		} finally {
-			unset( $_REQUEST['p'] );
+		// Core parses `p` with absint(), so `-<id>` targets the same post.
+		foreach ( array( (string) $this->posts['admin_secret'], '-' . $this->posts['admin_secret'] ) as $value ) {
+			$_REQUEST['p'] = $value;
+			try {
+				do_action( 'load-edit-comments.php' );
+				$this->fail( 'Expected wp_die() for p=' . $value );
+			} catch ( WPDieException $e ) {
+				$this->assertStringContainsString( 'not allowed', $e->getMessage() );
+			} finally {
+				unset( $_REQUEST['p'] );
+			}
+		}
+	}
+
+	/**
+	 * Attachments of hidden posts do not expose the parent's permalink.
+	 *
+	 * @return void
+	 */
+	public function test_attachment_links_hide_hidden_parent_permalink() {
+		$this->set_permalink_structure( '/%postname%/' );
+
+		$attachment  = self::factory()->attachment->create(
+			array(
+				'post_parent'    => $this->posts['admin_secret'],
+				'post_mime_type' => 'image/jpeg',
+				'post_title'     => 'hap-photo',
+			)
+		);
+		$hidden_slug = get_post_field( 'post_name', $this->posts['admin_secret'] );
+
+		wp_set_current_user( $this->editor_id );
+		$link = get_permalink( $attachment );
+		$this->assertStringNotContainsString( $hidden_slug, $link );
+		$this->assertStringContainsString( 'attachment_id=' . $attachment, $link );
+
+		wp_set_current_user( $this->admin_id );
+		$this->assertStringContainsString( $hidden_slug, get_permalink( $attachment ) );
+	}
+
+	/**
+	 * Classic menu items and Navigation Link blocks for hidden posts are not rendered.
+	 *
+	 * @return void
+	 */
+	public function test_menus_skip_hidden_posts() {
+		$menu_id = wp_create_nav_menu( 'HAP menu' );
+		foreach ( array( 'admin_secret', 'admin_public' ) as $label ) {
+			wp_update_nav_menu_item(
+				$menu_id,
+				0,
+				array(
+					'menu-item-type'      => 'post_type',
+					'menu-item-object'    => 'post',
+					'menu-item-object-id' => $this->posts[ $label ],
+					'menu-item-status'    => 'publish',
+				)
+			);
+		}
+
+		$object_ids = array_map( 'intval', wp_list_pluck( wp_get_nav_menu_items( $menu_id ), 'object_id' ) );
+		$this->assertSame( array( $this->posts['admin_public'] ), $object_ids );
+
+		$block = array(
+			'blockName' => 'core/navigation-link',
+			'attrs'     => array(
+				'kind' => 'post-type',
+				'id'   => $this->posts['admin_secret'],
+			),
+		);
+		$this->assertSame( '', apply_filters( 'render_block_core/navigation-link', '<li>link</li>', $block ) );
+
+		$block['attrs']['id'] = $this->posts['admin_public'];
+		$this->assertSame( '<li>link</li>', apply_filters( 'render_block_core/navigation-link', '<li>link</li>', $block ) );
+	}
+
+	/**
+	 * The Empty Trash rewrite only applies to the Trash view.
+	 *
+	 * @return void
+	 */
+	public function test_empty_trash_rewrite_ignores_non_trash_statuses() {
+		wp_set_current_user( $this->editor_id );
+
+		foreach ( array( 'all', 'any', 'publish' ) as $status ) {
+			$_REQUEST['delete_all']  = 'Empty Trash';
+			$_REQUEST['post_status'] = $status;
+
+			do_action( 'load-edit.php' );
+
+			$rewritten = isset( $_REQUEST['post'] ) || ! isset( $_REQUEST['delete_all'] );
+			unset( $_REQUEST['delete_all'], $_REQUEST['post_status'], $_REQUEST['post'], $_REQUEST['action'] );
+
+			$this->assertFalse( $rewritten, 'post_status=' . $status );
 		}
 	}
 

@@ -95,6 +95,9 @@ final class HAP_Query_Filter {
 
 		// Core admin screens and template tags that read posts by ID.
 		add_filter( 'the_title', array( $this, 'filter_the_title' ), 10, 2 );
+		add_filter( 'attachment_link', array( $this, 'filter_attachment_link' ), 10, 2 );
+		add_filter( 'wp_setup_nav_menu_item', array( $this, 'filter_nav_menu_item' ) );
+		add_filter( 'render_block_core/navigation-link', array( $this, 'filter_navigation_link_block' ), 10, 2 );
 		add_action( 'load-edit-comments.php', array( $this, 'guard_post_comments_screen' ) );
 		add_action( 'load-edit.php', array( $this, 'limit_empty_trash_to_visible_posts' ) );
 		add_filter( 'oembed_request_post_id', array( $this, 'filter_requested_post_id' ) );
@@ -332,22 +335,109 @@ final class HAP_Query_Filter {
 	 */
 	public function filter_the_title( $title, $post_id = 0 ) {
 		$post_id = $this->to_id( $post_id );
-		if ( $post_id <= 0 || $this->is_filtering || $post_id === $this->saving_post_id ) {
+		if ( $post_id <= 0 || $this->is_filtering || $this->is_saving( $post_id ) ) {
 			return $title;
+		}
+
+		return $this->is_hidden_for_current_user( $post_id ) ? __( '(Private post)', 'hide-a-post' ) : $title;
+	}
+
+	/**
+	 * Keeps a hidden parent's permalink (and slug) out of attachment URLs.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param string $link    Attachment permalink.
+	 * @param int    $post_id Attachment ID.
+	 * @return string
+	 */
+	public function filter_attachment_link( $link, $post_id ) {
+		$attachment = get_post( $this->to_id( $post_id ) );
+		if ( ! ( $attachment instanceof WP_Post ) || $attachment->post_parent <= 0 || $this->is_filtering ) {
+			return $link;
+		}
+
+		if ( $this->is_hidden_for_current_user( (int) $attachment->post_parent ) ) {
+			return add_query_arg( 'attachment_id', (int) $attachment->ID, home_url( '/' ) );
+		}
+
+		return $link;
+	}
+
+	/**
+	 * Drops classic menu items that point at hidden posts on the front end
+	 * (core removes items marked `_invalid` outside wp-admin).
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param object $menu_item Menu item object.
+	 * @return object
+	 */
+	public function filter_nav_menu_item( $menu_item ) {
+		if ( is_admin() || ! is_object( $menu_item ) || ! isset( $menu_item->type, $menu_item->object, $menu_item->object_id ) ) {
+			return $menu_item;
+		}
+
+		if ( 'post_type' === $menu_item->type && 'post' === $menu_item->object && $this->is_hidden_for_current_user( $this->to_id( $menu_item->object_id ) ) ) {
+			$menu_item->_invalid = true;
+		}
+
+		return $menu_item;
+	}
+
+	/**
+	 * Skips Navigation Link blocks that point at hidden posts.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param string               $block_content Rendered block.
+	 * @param array<string, mixed> $block         Parsed block.
+	 * @return string
+	 */
+	public function filter_navigation_link_block( $block_content, $block ) {
+		$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : array();
+
+		if ( isset( $attrs['kind'], $attrs['id'] ) && 'post-type' === $attrs['kind'] && $this->is_hidden_for_current_user( $this->to_id( $attrs['id'] ) ) ) {
+			return '';
+		}
+
+		return $block_content;
+	}
+
+	/**
+	 * Checks whether the given post ID is the post being saved by the current user's REST request.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param int $post_id Post ID.
+	 * @return bool
+	 */
+	private function is_saving( $post_id ) {
+		return $post_id > 0 && $post_id === $this->saving_post_id && get_current_user_id() === $this->saving_user_id;
+	}
+
+	/**
+	 * Checks whether a post ID is hidden from the current user.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param int $post_id Post ID.
+	 * @return bool
+	 */
+	private function is_hidden_for_current_user( $post_id ) {
+		if ( $post_id <= 0 || $this->is_filtering ) {
+			return false;
 		}
 
 		$this->is_filtering = true;
 
 		try {
 			$post = get_post( $post_id );
-			if ( $post instanceof WP_Post && 'post' === $post->post_type && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
-				return __( '(Private post)', 'hide-a-post' );
-			}
+
+			return $post instanceof WP_Post && $this->should_filter_for_current_user() && $this->is_post_hidden( $post );
 		} finally {
 			$this->is_filtering = false;
 		}
-
-		return $title;
 	}
 
 	/**
@@ -359,8 +449,10 @@ final class HAP_Query_Filter {
 	 * @return void
 	 */
 	public function guard_post_comments_screen() {
+		// Parse exactly as WP_Comments_List_Table does (absint), so negative and
+		// array values resolve to the same post core renders.
 		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only screen parameter.
-		$post_id = isset( $_REQUEST['p'] ) ? $this->to_id( sanitize_text_field( wp_unslash( $_REQUEST['p'] ) ) ) : 0;
+		$post_id = isset( $_REQUEST['p'] ) ? absint( wp_unslash( $_REQUEST['p'] ) ) : 0;
 		$post    = $post_id > 0 ? get_post( $post_id ) : null;
 
 		if ( $post instanceof WP_Post && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
@@ -389,24 +481,29 @@ final class HAP_Query_Filter {
 			return;
 		}
 
-		$post_type   = isset( $_REQUEST['post_type'] ) ? sanitize_key( wp_unslash( $_REQUEST['post_type'] ) ) : 'post';
+		global $typenow;
+
+		// admin.php resolves the screen's post type (falling back to `post`).
+		$post_type   = is_string( $typenow ) && '' !== $typenow ? $typenow : 'post';
 		$post_status = isset( $_REQUEST['post_status'] ) ? sanitize_key( wp_unslash( $_REQUEST['post_status'] ) ) : '';
 
-		if ( 'post' !== $post_type || '' === $post_status || ! $this->should_filter_for_current_user() ) {
+		// Only the Trash view offers "Empty Trash"; leave anything else to core.
+		if ( 'post' !== $post_type || 'trash' !== $post_status || ! $this->should_filter_for_current_user() ) {
 			return;
 		}
 
 		$visible_ids = get_posts(
 			array(
 				'post_type'        => 'post',
-				'post_status'      => $post_status,
+				'post_status'      => 'trash',
 				'fields'           => 'ids',
 				'posts_per_page'   => -1,
 				'suppress_filters' => false,
 			)
 		);
 
-		foreach ( array( 'delete_all', 'delete_all2' ) as $key ) {
+		// edit.php reads `media` and `ids` before `post`.
+		foreach ( array( 'delete_all', 'delete_all2', 'media', 'ids' ) as $key ) {
 			unset( $_REQUEST[ $key ], $_GET[ $key ], $_POST[ $key ] );
 		}
 
