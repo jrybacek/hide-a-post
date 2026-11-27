@@ -7,14 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### ✨ Features
+
+- **core:** [**breaking**] Modernize plugin architecture for WP 7.0+ and PHP 7.4-8.5 ([94ebe60](https://github.com/jrybacek/hide-a-post/commit/94ebe60cbca40aa1a2a7f5dcce142c2e0a4f918f))
+- **settings:** Replace category text input with hierarchical checkboxes ([7974ee5](https://github.com/jrybacek/hide-a-post/commit/7974ee52d8548c65114423423d36b9f5a318b867))
+
+### 🐛 Bug Fixes
+
+- **query:** Fix WP-CLI crash, harden SQL, and block direct post-ID reads ([2f6bc31](https://github.com/jrybacek/hide-a-post/commit/2f6bc318156559e8abc92c492815c672db07accc))
+
 ### 📝 Documentation
 
-- **readme:** Modernize README following standard-readme spec ([cbbe480](https://github.com/jrybacek/hide-a-post/commit/cbbe4800fa55f0fa5e525672f969da0433c6a9ec))
+- **readme:** Modernize README following standard-readme spec ([fd67913](https://github.com/jrybacek/hide-a-post/commit/fd67913f85862f2ec936bb4c16d77b25d682cdf9))
+- **changelog:** Generate initial CHANGELOG.md with git-cliff ([2a81559](https://github.com/jrybacek/hide-a-post/commit/2a815591b514cd4e219f0dfc8c7400271f291336))
+- **plugin:** Update README.md and readme.txt for 2.0.0 ([8d6b13c](https://github.com/jrybacek/hide-a-post/commit/8d6b13c3979edba58a348b9c61fda06564009515))
+
+### 👷 CI/CD
+
+- **quality:** Add PHP 7.4-8.5 lint, WPCS, PHPCompatibility, and PHPStan ([e34f7e5](https://github.com/jrybacek/hide-a-post/commit/e34f7e5254f280444ea0044a71bcda356141614f))
 
 ### 🔧 Miscellaneous Tasks
 
-- **git:** Add gitmoji and conventional commits convention and hook ([9be017f](https://github.com/jrybacek/hide-a-post/commit/9be017fe257eeaca6dd2d8d234538b032764152a))
-- **changelog:** Configure git-cliff for changelog generation ([9bdb738](https://github.com/jrybacek/hide-a-post/commit/9bdb73847b6b3f32a29d31595f95947772ad647a))
+- **git:** Add gitmoji and conventional commits convention and hook ([8d65c01](https://github.com/jrybacek/hide-a-post/commit/8d65c013623f1f5f33800fb15524c9f598f27f5c))
+- **changelog:** Configure git-cliff for changelog generation ([cf7cbaa](https://github.com/jrybacek/hide-a-post/commit/cf7cbaa917d171f90ba4eb6c4880ed7cd6cc4870))
 
 ### 📜 Legacy Changes
 
