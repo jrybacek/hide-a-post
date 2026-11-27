@@ -578,6 +578,104 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 	}
 
 	/**
+	 * Creating a post into a hidden category with meta succeeds, even when a
+	 * nested REST request runs during the save.
+	 *
+	 * @return void
+	 */
+	public function test_rest_create_into_hidden_category_with_meta_and_nested_request() {
+		register_post_meta(
+			'post',
+			'hap_test_note',
+			array(
+				'show_in_rest' => true,
+				'single'       => true,
+				'type'         => 'string',
+			)
+		);
+		$nested = static function () {
+			rest_do_request( new WP_REST_Request( 'GET', '/wp/v2/categories' ) );
+		};
+		add_action( 'rest_insert_post', $nested, 5 );
+
+		wp_set_current_user( $this->editor_id );
+
+		$request = new WP_REST_Request( 'POST', '/wp/v2/posts' );
+		$request->set_param( 'title', 'HAP created' );
+		$request->set_param( 'status', 'publish' );
+		$request->set_param( 'categories', array( $this->secret_cat ) );
+		$request->set_param( 'meta', array( 'hap_test_note' => 'created' ) );
+		$created = rest_do_request( $request );
+
+		$request = new WP_REST_Request( 'POST', '/wp/v2/posts/' . $this->posts['editor_public'] );
+		$request->set_param( 'categories', array( $this->secret_cat ) );
+		$request->set_param( 'meta', array( 'hap_test_note' => 'updated' ) );
+		$updated = rest_do_request( $request );
+
+		remove_action( 'rest_insert_post', $nested, 5 );
+		unregister_post_meta( 'post', 'hap_test_note' );
+
+		$this->assertSame( 201, $created->get_status() );
+		$this->assertSame( 'created', get_post_meta( (int) $created->get_data()['id'], 'hap_test_note', true ) );
+		$this->assertSame( 200, $updated->get_status() );
+		$this->assertSame( 'updated', get_post_meta( $this->posts['editor_public'], 'hap_test_note', true ) );
+		$this->assertFalse( user_can( $this->editor_id, 'edit_post', (int) $created->get_data()['id'] ) );
+	}
+
+	/**
+	 * Core REST endpoints that take a `post` parameter cannot target a hidden post.
+	 *
+	 * @return void
+	 */
+	public function test_rest_post_parameter_cannot_target_hidden_posts() {
+		$hidden = $this->posts['admin_secret'];
+
+		$request = new WP_REST_Request( 'GET', '/wp/v2/categories' );
+		$request->set_query_params( array( 'post' => $hidden ) );
+		$this->assertSame( 404, rest_do_request( $request )->get_status() );
+
+		$request = new WP_REST_Request( 'GET', '/wp/v2/categories' );
+		$request->set_query_params( array( 'post' => $this->posts['admin_public'] ) );
+		$this->assertSame( 200, rest_do_request( $request )->get_status() );
+
+		wp_set_current_user( $this->editor_id );
+		$comment = self::factory()->comment->create(
+			array(
+				'comment_post_ID' => $this->posts['editor_public'],
+				'user_id'         => $this->editor_id,
+			)
+		);
+
+		$request = new WP_REST_Request( 'POST', '/wp/v2/comments/' . $comment );
+		$request->set_param( 'post', $hidden );
+		$this->assertSame( 404, rest_do_request( $request )->get_status() );
+		$this->assertSame( (string) $this->posts['editor_public'], get_comment( $comment )->comment_post_ID );
+	}
+
+	/**
+	 * Hidden categories cannot be deleted by non-Administrators through any path,
+	 * including core's bulk delete (which only checks `delete_terms`).
+	 *
+	 * @return void
+	 */
+	public function test_hidden_category_deletion_is_blocked_for_editors() {
+		wp_set_current_user( $this->editor_id );
+
+		try {
+			wp_delete_term( $this->secret_cat, 'category' );
+			$this->fail( 'Expected wp_die().' );
+		} catch ( WPDieException $e ) {
+			$this->assertInstanceOf( WP_Term::class, get_term( $this->secret_cat, 'category' ) );
+		}
+
+		$this->assertSame( array( $this->secret_cat ), HAP_Plugin::get_hidden_category_ids() );
+		$this->assertTrue( wp_delete_term( $this->public_cat, 'category' ) );
+
+		wp_set_current_user( $this->admin_id );
+		$this->assertTrue( wp_delete_term( $this->secret_cat, 'category' ) );
+	}
+
+	/**
 	 * Only Administrators can delete a hidden category.
 	 *
 	 * @return void

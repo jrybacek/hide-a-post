@@ -65,6 +65,14 @@ final class HAP_Query_Filter {
 	private $saving_user_id = 0;
 
 	/**
+	 * REST request that owns the current save exemption, if any.
+	 *
+	 * @since 2.0.0
+	 * @var WP_REST_Request<array<string, mixed>>|null
+	 */
+	private $saving_request = null;
+
+	/**
 	 * Registers all visibility filter hooks.
 	 *
 	 * @since 2.0.0
@@ -81,7 +89,9 @@ final class HAP_Query_Filter {
 		add_filter( 'map_meta_cap', array( $this, 'filter_map_meta_cap' ), 10, 4 );
 		add_filter( 'map_meta_cap', array( $this, 'filter_delete_term_cap' ), 10, 4 );
 		add_filter( 'rest_request_before_callbacks', array( $this, 'filter_rest_request' ), 10, 3 );
-		add_filter( 'rest_request_after_callbacks', array( $this, 'end_rest_save' ) );
+		add_filter( 'rest_request_after_callbacks', array( $this, 'end_rest_save' ), 10, 3 );
+		add_action( 'rest_insert_post', array( $this, 'track_rest_save_post' ), 10, 2 );
+		add_action( 'pre_delete_term', array( $this, 'guard_hidden_category_deletion' ), 10, 2 );
 		add_filter( 'oembed_request_post_id', array( $this, 'filter_requested_post_id' ) );
 		add_filter( 'old_slug_redirect_post_id', array( $this, 'filter_requested_post_id' ) );
 		add_filter( 'redirect_canonical', array( $this, 'filter_redirect_canonical' ) );
@@ -273,16 +283,69 @@ final class HAP_Query_Filter {
 	}
 
 	/**
-	 * Ends the save exemption set by {@see HAP_Query_Filter::filter_rest_request()}.
+	 * Stops filtered users from deleting a hidden category by any route,
+	 * including core's bulk delete, which only checks `delete_terms`.
+	 *
+	 * Runs only for logged-in users, so cron and other system contexts can still
+	 * delete terms programmatically.
 	 *
 	 * @since 2.0.0
 	 *
-	 * @param mixed $response Result to send to the client.
+	 * @param int    $term_id  Term ID about to be deleted.
+	 * @param string $taxonomy Taxonomy slug.
+	 * @return void
+	 */
+	public function guard_hidden_category_deletion( $term_id, $taxonomy ) {
+		if ( 'category' !== $taxonomy || ! is_user_logged_in() || $this->is_filtering ) {
+			return;
+		}
+
+		if ( ! in_array( $this->to_id( $term_id ), HAP_Plugin::get_hidden_category_ids(), true ) ) {
+			return;
+		}
+
+		if ( $this->is_bypassed_for_user( get_current_user_id() ) ) {
+			return;
+		}
+
+		wp_die(
+			esc_html__( 'Sorry, you are not allowed to delete this category.', 'hide-a-post' ),
+			'',
+			array( 'response' => 403 )
+		);
+	}
+
+	/**
+	 * Binds the save exemption to the post created or updated by the tracked REST request.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param WP_Post                               $post    Inserted or updated post.
+	 * @param WP_REST_Request<array<string, mixed>> $request Request object.
+	 * @return void
+	 */
+	public function track_rest_save_post( $post, $request ) {
+		if ( null !== $this->saving_request && $request === $this->saving_request && $post instanceof WP_Post ) {
+			$this->saving_post_id = (int) $post->ID;
+		}
+	}
+
+	/**
+	 * Ends the save exemption when the request that started it finishes.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param mixed                $response Result to send to the client.
+	 * @param array<string, mixed> $handler  Route handler used for the request.
+	 * @param mixed                $request  Request used to generate the response.
 	 * @return mixed
 	 */
-	public function end_rest_save( $response ) {
-		$this->saving_post_id = 0;
-		$this->saving_user_id = 0;
+	public function end_rest_save( $response, $handler = array(), $request = null ) {
+		if ( null !== $this->saving_request && $request === $this->saving_request ) {
+			$this->saving_request = null;
+			$this->saving_post_id = 0;
+			$this->saving_user_id = 0;
+		}
 
 		return $response;
 	}
@@ -306,18 +369,17 @@ final class HAP_Query_Filter {
 			return $response;
 		}
 
-		$route = (string) $request->get_route();
+		$route   = (string) $request->get_route();
+		$is_read = in_array( $request->get_method(), array( 'GET', 'HEAD' ), true );
 
 		$this->is_filtering = true;
 
 		try {
-			// Query and body `id`/`parent` values take precedence over URL
-			// parameters in WP_REST_Request, so check every candidate ID on any
-			// matched item route (including `/0`), cast the way core casts them.
-			$route_post_id = $this->match_route_id( $route, rest_get_route_for_post_type_items( 'post' ) );
-			if ( null !== $route_post_id ) {
-				$candidates = array( $route_post_id, $request->get_param( 'id' ), $request->get_param( 'parent' ) );
-				foreach ( $candidates as $candidate ) {
+			// Core endpoints that take a `post` (comments, terms) must not act on
+			// or describe a hidden post.
+			if ( 1 === preg_match( '#^/wp/v2/#i', $route ) ) {
+				$post_param = $request->get_param( 'post' );
+				foreach ( is_array( $post_param ) ? $post_param : array( $post_param ) as $candidate ) {
 					$candidate_id = $this->to_id( $candidate );
 					$post         = $candidate_id > 0 ? get_post( $candidate_id ) : null;
 					if ( $post instanceof WP_Post && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
@@ -328,13 +390,43 @@ final class HAP_Query_Filter {
 						);
 					}
 				}
+			}
 
-				// A save that starts on a visible post may assign a hidden category;
-				// let it finish its own meta and term writes within this request.
-				if ( ! in_array( $request->get_method(), array( 'GET', 'HEAD' ), true ) ) {
+			$posts_base = rest_get_route_for_post_type_items( 'post' );
+
+			// A save that starts on a visible post (or creates one) may assign a
+			// hidden category; let it finish its own meta and term writes. The
+			// exemption is bound to this request and the post it saves.
+			if ( ! $is_read && null === $this->saving_request && '' !== $posts_base && 1 === preg_match( '#^' . preg_quote( untrailingslashit( $posts_base ), '#' ) . '(?:/|$)#i', $route ) ) {
+				$this->saving_request = $request;
+				$this->saving_user_id = get_current_user_id();
+				$this->saving_post_id = 0;
+			}
+
+			// Query and body `id`/`parent` values take precedence over URL
+			// parameters in WP_REST_Request, so check every candidate ID on any
+			// matched item route (including `/0`), cast the way core casts them.
+			$route_post_id = $this->match_route_id( $route, $posts_base );
+			if ( null !== $route_post_id ) {
+				$candidates = array( $route_post_id, $request->get_param( 'id' ), $request->get_param( 'parent' ) );
+				foreach ( $candidates as $candidate ) {
+					$candidate_id = $this->to_id( $candidate );
+					$post         = $candidate_id > 0 ? get_post( $candidate_id ) : null;
+					if ( $post instanceof WP_Post && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
+						$this->end_rest_save( null, array(), $request );
+
+						return new WP_Error(
+							'rest_post_invalid_id',
+							__( 'Invalid post ID.', 'hide-a-post' ),
+							array( 'status' => 404 )
+						);
+					}
+				}
+
+				// Every candidate is visible, so the update target may be exempted now.
+				if ( $request === $this->saving_request ) {
 					$target_id            = $this->to_id( $request->get_param( 'id' ) );
-					$this->saving_post_id = $target_id > 0 ? $target_id : $route_post_id;
-					$this->saving_user_id = get_current_user_id();
+					$this->saving_post_id = $target_id > 0 ? $target_id : (int) $route_post_id;
 				}
 
 				return $response;
