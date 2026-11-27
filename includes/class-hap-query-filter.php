@@ -501,8 +501,17 @@ final class HAP_Query_Filter {
 	public function filter_navigation_submenu_block( $block_content, $block, $instance = null ) {
 		$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : array();
 
-		// Core already suppressed it (e.g. unpublished target), so keep it suppressed.
-		if ( '' === trim( (string) $block_content ) || ! $this->should_redact_submenu( $attrs ) ) {
+		// Core already suppressed it (e.g. unpublished target on WP 7.1+).
+		if ( '' === trim( (string) $block_content ) ) {
+			return $block_content;
+		}
+
+		// Unpublished hidden target: drop the submenu, as WP 7.1+ core does.
+		if ( $this->is_hidden_navigation_target( $attrs ) && ! $this->should_redact_submenu( $attrs ) ) {
+			return '';
+		}
+
+		if ( ! $this->should_redact_submenu( $attrs ) ) {
 			return $block_content;
 		}
 
@@ -569,8 +578,11 @@ final class HAP_Query_Filter {
 
 		$original                = $args['render_callback'];
 		$args['render_callback'] = function ( $attributes, $content = '', $block = null ) use ( $original ) {
-			if ( is_array( $attributes ) && isset( $attributes['ref'] ) && $this->is_hidden_for_current_user( $this->to_id( $attributes['ref'] ) ) ) {
-				return '';
+			// Core copies the legacy `navigationMenuId` into `ref` inside the callback.
+			foreach ( array( 'ref', 'navigationMenuId' ) as $key ) {
+				if ( is_array( $attributes ) && isset( $attributes[ $key ] ) && $this->is_hidden_for_current_user( $this->to_id( $attributes[ $key ] ) ) ) {
+					return '';
+				}
 			}
 
 			return call_user_func( $original, $attributes, $content, $block );
@@ -743,9 +755,12 @@ final class HAP_Query_Filter {
 	}
 
 	/**
-	 * Checks whether a Navigation Submenu should be rendered redacted: it points
-	 * at a hidden post that is published. Core already suppresses submenus whose
-	 * post is not published, so those are left for core to drop.
+	 * Checks whether a Navigation Submenu points at a hidden, published post and
+	 * should therefore be rendered redacted (keeping its visible children).
+	 *
+	 * Submenus whose hidden post is not published are dropped instead (see
+	 * {@see HAP_Query_Filter::filter_navigation_submenu_block()}), matching what
+	 * WordPress 7.1+ does for unpublished targets on every supported version.
 	 *
 	 * @since 2.0.0
 	 *

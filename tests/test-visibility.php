@@ -910,7 +910,8 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 		wp_set_current_user( $this->admin_id );
 		$this->assertStringContainsString( 'SecretParent', do_blocks( $this->nested_navigation_markup() ) );
 
-		// Core drops submenus whose post is not published; redaction must not revive them.
+		// An unpublished hidden target drops the whole submenu on every supported
+		// version (as WP 7.1+ core does), never reviving it as "(Private post)".
 		wp_set_current_user( 0 );
 		wp_update_post(
 			array(
@@ -919,8 +920,11 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 			)
 		);
 		$html = do_blocks( $this->nested_navigation_markup() );
+		$this->assertStringNotContainsString( 'SecretParent', $html );
+		$this->assertStringNotContainsString( 'SecretDescription', $html );
 		$this->assertStringNotContainsString( '(Private post)', $html );
 		$this->assertStringNotContainsString( 'PublicChild<', $html );
+		$this->assertStringContainsString( 'PublicParent', $html );
 	}
 
 	/**
@@ -937,8 +941,10 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 			)
 		);
 
-		$markup = '<!-- wp:navigation {"ref":' . $this->posts['admin_secret'] . '} /-->';
-		$this->assertStringNotContainsString( 'SecretBody', do_blocks( $markup ) );
+		foreach ( array( 'ref', 'navigationMenuId' ) as $attribute ) {
+			$markup = '<!-- wp:navigation {"' . $attribute . '":' . $this->posts['admin_secret'] . '} /-->';
+			$this->assertStringNotContainsString( 'SecretBody', do_blocks( $markup ), $attribute );
+		}
 
 		wp_set_current_user( $this->editor_id );
 		$request = new WP_REST_Request( 'POST', '/wp/v2/block-renderer/core/navigation' );
