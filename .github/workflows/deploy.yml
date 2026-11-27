@@ -1,0 +1,96 @@
+name: Deploy to WordPress.org
+
+on:
+  push:
+    tags:
+      # Matches both bare (2.0.0, like the legacy 1.0 / 1.1 tags) and v-prefixed (v2.0.0) tags.
+      - '[0-9]+.[0-9]+*'
+      - 'v[0-9]+.[0-9]+*'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: >-
+          "assets" updates readme.txt and assets/ (icons, banners, screenshots, blueprint)
+          for the released version. "release" deploys the plugin; select the release tag
+          in "Use workflow from".
+        type: choice
+        options:
+          - assets
+          - release
+        default: assets
+      dry-run:
+        description: Run a release deploy without committing to SVN (release mode only).
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wordpress-org-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy (${{ github.event_name == 'push' && 'release' || inputs.mode }})
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve deploy mode and version
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_MODE: ${{ inputs.mode }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = "push" ]; then
+            mode=release
+          else
+            mode="$INPUT_MODE"
+          fi
+
+          expected=""
+          if [ "$mode" = "release" ]; then
+            if [ "$REF_TYPE" != "tag" ]; then
+              echo "::error::Release deploys must run from a tag. Pick the tag in \"Use workflow from\"."
+              exit 1
+            fi
+            expected="${REF_NAME#v}"
+          fi
+
+          version=$(grep -m1 -E '^Stable tag:' readme.txt | tr -d '\r' | awk '{print $NF}')
+
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "expected=$expected" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Mode: $mode, tag version: ${expected:-n/a}, Stable tag: $version"
+
+      - name: Validate release
+        env:
+          EXPECTED_VERSION: ${{ steps.resolve.outputs.expected }}
+        run: python3 -B .github/scripts/validate-release.py HEAD
+
+      - name: Deploy plugin to WordPress.org
+        if: steps.resolve.outputs.mode == 'release'
+        uses: 10up/action-wordpress-plugin-deploy@2.3.0
+        with:
+          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run || false }}
+        env:
+          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
+          SLUG: hide-a-post
+          ASSETS_DIR: assets
+          VERSION: ${{ steps.resolve.outputs.version }}
+
+      - name: Update readme and assets on WordPress.org
+        if: steps.resolve.outputs.mode == 'assets'
+        uses: 10up/action-wordpress-plugin-asset-update@2.2.0
+        env:
+          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
+          SLUG: hide-a-post
+          ASSETS_DIR: assets
+          README_NAME: readme.txt
