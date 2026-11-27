@@ -1,6 +1,6 @@
 <?php
 /**
- * WP_Query and direct-access filtering for Hide A Post.
+ * Query, capability, REST API, comment, and link filtering for Hide A Post.
  *
  * @package Hide_A_Post
  */
@@ -10,25 +10,38 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Excludes hidden categories and Administrator-authored default-category posts
- * from WP_Query results, wp-admin direct post access, and REST single-post reads
- * for non-Administrator users.
+ * Hides posts assigned to the configured hidden categories (and posts authored
+ * by Administrators in the default category) from users who cannot manage options.
+ *
+ * Every visibility path shares one SQL predicate built by
+ * {@see HAP_Query_Filter::get_hidden_post_condition()}, so WP_Query, get_posts(),
+ * comments, adjacent-post links, archives, REST, oEmbed, capabilities, and
+ * canonical redirects all agree on which posts are hidden.
  *
  * @since 2.0.0
  */
 final class HAP_Query_Filter {
 
 	/**
-	 * Cached Administrator user IDs per blog ID for the current request.
+	 * Object cache group used for computed hidden post IDs.
 	 *
 	 * @since 2.0.0
-	 * @var array<int, int[]>
+	 * @var string
 	 */
-	private $admin_user_ids_by_blog = array();
+	const CACHE_GROUP = 'hide-a-post';
 
 	/**
-	 * Re-entrancy guard to prevent recursive filtering when hooks inside
-	 * `get_option()` or `get_users()` trigger nested queries.
+	 * Administrator user IDs memoized per blog, user cache version, and super admin list.
+	 *
+	 * @since 2.0.0
+	 * @var array<string, int[]>
+	 */
+	private $admin_ids_cache = array();
+
+	/**
+	 * Re-entrancy guard that prevents recursive filtering when hooks fired while
+	 * evaluating visibility (options, users, capabilities, url_to_postid()) run
+	 * nested queries.
 	 *
 	 * @since 2.0.0
 	 * @var bool
@@ -36,20 +49,40 @@ final class HAP_Query_Filter {
 	private $is_filtering = false;
 
 	/**
-	 * Registers query, capability, and REST API filter hooks.
+	 * Registers all visibility filter hooks.
 	 *
 	 * @since 2.0.0
 	 *
 	 * @return void
 	 */
 	public function init() {
+		// Post queries.
 		add_filter( 'posts_where', array( $this, 'filter_posts_where' ), 10, 2 );
+		add_action( 'pre_get_posts', array( $this, 'filter_unfiltered_query' ) );
+
+		// Direct access by ID.
 		add_filter( 'map_meta_cap', array( $this, 'filter_map_meta_cap' ), 10, 4 );
-		add_filter( 'rest_prepare_post', array( $this, 'filter_rest_prepare_post' ), 10, 3 );
+		add_filter( 'rest_request_before_callbacks', array( $this, 'filter_rest_request' ), 10, 3 );
+		add_filter( 'oembed_request_post_id', array( $this, 'filter_oembed_request_post_id' ) );
+		add_filter( 'redirect_canonical', array( $this, 'filter_redirect_canonical' ) );
+
+		// Comments.
+		add_action( 'pre_get_comments', array( $this, 'filter_comment_query' ) );
+		add_filter( 'comment_feed_where', array( $this, 'filter_comment_feed_where' ) );
+		add_filter( 'comments_open', array( $this, 'filter_comments_open' ), 10, 2 );
+
+		// Core SQL that bypasses WP_Query.
+		add_filter( 'get_previous_post_where', array( $this, 'filter_adjacent_post_where' ) );
+		add_filter( 'get_next_post_where', array( $this, 'filter_adjacent_post_where' ) );
+		add_filter( 'getarchives_where', array( $this, 'filter_archives_where' ) );
+
+		// Keep cached post queries in sync with category assignments.
+		add_action( 'set_object_terms', array( $this, 'flush_post_query_cache_on_set_terms' ), 10, 4 );
+		add_action( 'deleted_term_relationships', array( $this, 'flush_post_query_cache_on_delete_terms' ), 10, 3 );
 	}
 
 	/**
-	 * Appends parameterized NOT EXISTS clauses to hide matching posts from non-Administrators.
+	 * Appends the hidden-post exclusion to filtered WP_Query requests.
 	 *
 	 * @since 2.0.0
 	 *
@@ -65,64 +98,14 @@ final class HAP_Query_Filter {
 		$this->is_filtering = true;
 
 		try {
-			if ( ! $this->should_filter_query( $query ) ) {
-				return $where;
-			}
+			if ( $this->should_filter_query( $query ) ) {
+				global $wpdb;
 
-			$hidden_categories = HAP_Plugin::get_hidden_category_ids();
-			if ( empty( $hidden_categories ) ) {
-				return $where;
-			}
-
-			global $wpdb;
-
-			$default_category_id = absint( get_option( 'default_category', 0 ) );
-			if ( $default_category_id > 0 ) {
-				$admin_ids = $this->get_administrator_ids();
-				if ( ! empty( $admin_ids ) ) {
-					$author_placeholders = implode( ', ', array_fill( 0, count( $admin_ids ), '%d' ) );
-					$uncat_params        = array_merge( $admin_ids, array( $default_category_id ) );
-
-					// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Dynamic placeholder list built exclusively from integer count.
-					$where .= (string) $wpdb->prepare(
-						" AND NOT (
-							{$wpdb->posts}.post_type = 'post'
-							AND {$wpdb->posts}.post_author IN ({$author_placeholders})
-							AND EXISTS (
-								SELECT 1
-								FROM {$wpdb->term_relationships} AS hap_tr_uncat
-								INNER JOIN {$wpdb->term_taxonomy} AS hap_tt_uncat
-									ON hap_tr_uncat.term_taxonomy_id = hap_tt_uncat.term_taxonomy_id
-								WHERE hap_tr_uncat.object_id = {$wpdb->posts}.ID
-									AND hap_tt_uncat.taxonomy = 'category'
-									AND hap_tt_uncat.term_id = %d
-							)
-						)",
-						$uncat_params
-					);
-					// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				$condition = $this->get_hidden_post_condition( $wpdb->posts );
+				if ( '' !== $condition ) {
+					$where .= ' AND NOT ' . $condition;
 				}
 			}
-
-			$category_placeholders = implode( ', ', array_fill( 0, count( $hidden_categories ), '%d' ) );
-
-			// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare -- Dynamic placeholder list built exclusively from integer count.
-			$where .= (string) $wpdb->prepare(
-				" AND NOT (
-					{$wpdb->posts}.post_type = 'post'
-					AND EXISTS (
-						SELECT 1
-						FROM {$wpdb->term_relationships} AS hap_tr
-						INNER JOIN {$wpdb->term_taxonomy} AS hap_tt
-							ON hap_tr.term_taxonomy_id = hap_tt.term_taxonomy_id
-						WHERE hap_tr.object_id = {$wpdb->posts}.ID
-							AND hap_tt.taxonomy = 'category'
-							AND hap_tt.term_id IN ({$category_placeholders})
-					)
-				)",
-				$hidden_categories
-			);
-			// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
 		} finally {
 			$this->is_filtering = false;
 		}
@@ -131,31 +114,83 @@ final class HAP_Query_Filter {
 	}
 
 	/**
-	 * Prevents non-Administrators from directly reading, editing, or deleting hidden posts by ID.
+	 * Excludes hidden posts from queries that run with `suppress_filters`
+	 * (such as default get_posts() calls), which skip `posts_where`.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param WP_Query $query Current WP_Query instance.
+	 * @return void
+	 */
+	public function filter_unfiltered_query( $query ) {
+		if ( $this->is_filtering || ! ( $query instanceof WP_Query ) || ! $query->get( 'suppress_filters' ) ) {
+			return;
+		}
+
+		$this->is_filtering = true;
+
+		try {
+			if ( ! $this->should_filter_query( $query ) ) {
+				return;
+			}
+
+			$hidden_ids = $this->get_hidden_post_ids();
+			if ( empty( $hidden_ids ) ) {
+				return;
+			}
+
+			// WP_Query applies `p`, `post__in`, and `post__not_in` as an if/elseif
+			// chain, so explicit IDs must be filtered directly.
+			$single_id = absint( $query->get( 'p' ) );
+			if ( $single_id > 0 ) {
+				if ( in_array( $single_id, $hidden_ids, true ) ) {
+					$query->set( 'p', 0 );
+					$query->set( 'post__in', array( 0 ) );
+				}
+				return;
+			}
+
+			$post_in = wp_parse_id_list( $query->get( 'post__in' ) );
+			if ( ! empty( $post_in ) ) {
+				$remaining = array_values( array_diff( $post_in, $hidden_ids ) );
+				$query->set( 'post__in', empty( $remaining ) ? array( 0 ) : $remaining );
+				return;
+			}
+
+			$query->set(
+				'post__not_in',
+				array_values( array_unique( array_merge( wp_parse_id_list( $query->get( 'post__not_in' ) ), $hidden_ids ) ) )
+			);
+		} finally {
+			$this->is_filtering = false;
+		}
+	}
+
+	/**
+	 * Prevents filtered users from reading, editing, publishing, or deleting hidden posts by ID.
+	 *
+	 * Meta capabilities derived from these (such as `edit_post_meta` and
+	 * `edit_comment`) are covered because core maps them through `edit_post`.
 	 *
 	 * @since 2.0.0
 	 *
 	 * @param string[] $caps    Primitive capabilities required of the user.
 	 * @param string   $cap     Capability being checked.
 	 * @param int      $user_id User ID being checked.
-	 * @param mixed[]  $args    Additional capability arguments (typically post ID at index 0).
+	 * @param mixed[]  $args    Additional capability arguments (post ID or WP_Post at index 0).
 	 * @return string[]
 	 */
 	public function filter_map_meta_cap( $caps, $cap, $user_id, $args ) {
-		if ( $this->is_filtering ) {
+		if ( $this->is_filtering || ! in_array( $cap, array( 'read_post', 'edit_post', 'delete_post', 'publish_post' ), true ) ) {
 			return $caps;
 		}
 
-		if ( ! in_array( $cap, array( 'read_post', 'edit_post', 'delete_post' ), true ) ) {
+		if ( ! is_array( $args ) || ! isset( $args[0] ) ) {
 			return $caps;
 		}
 
-		if ( empty( $args ) || ! isset( $args[0] ) ) {
-			return $caps;
-		}
-
-		$post_id = HAP_Plugin::parse_positive_int( $args[0] );
-		if ( 0 === $post_id ) {
+		$post_id = $args[0] instanceof WP_Post ? (int) $args[0]->ID : HAP_Plugin::parse_positive_int( $args[0] );
+		if ( $post_id <= 0 ) {
 			return $caps;
 		}
 
@@ -178,38 +213,54 @@ final class HAP_Query_Filter {
 	}
 
 	/**
-	 * Blocks direct single-post REST API reads (`/wp/v2/posts/<id>`) for hidden posts
-	 * when requested by non-Administrators.
+	 * Rejects REST requests for hidden posts (and their sub-resources) and for
+	 * comments on hidden posts with a 404 before the endpoint callback runs.
+	 *
+	 * Runs before permission callbacks, so a filtered user who has just assigned
+	 * a hidden category still receives a normal response for that save.
 	 *
 	 * @since 2.0.0
 	 *
-	 * @param WP_REST_Response                      $response The response object.
-	 * @param WP_Post                               $post     Post object.
-	 * @param WP_REST_Request<array<string, mixed>> $request  Request object.
-	 * @return WP_REST_Response|WP_Error
+	 * @param mixed                                 $response Result to send to the client; null unless short-circuited.
+	 * @param array<string, mixed>                  $handler  Route handler used for the request.
+	 * @param WP_REST_Request<array<string, mixed>> $request  Request used to generate the response.
+	 * @return mixed
 	 */
-	public function filter_rest_prepare_post( $response, $post, $request ) {
-		if ( $this->is_filtering || ! ( $post instanceof WP_Post ) ) {
+	public function filter_rest_request( $response, $handler, $request ) {
+		if ( null !== $response || $this->is_filtering || ! ( $request instanceof WP_REST_Request ) ) {
 			return $response;
 		}
 
-		if ( ! ( $request instanceof WP_REST_Request ) || empty( $request['id'] ) ) {
-			return $response;
-		}
+		$route = (string) $request->get_route();
 
 		$this->is_filtering = true;
 
 		try {
-			if ( $this->is_bypassed_for_user( get_current_user_id() ) ) {
+			$post_id = $this->match_route_id( $route, rest_get_route_for_post_type_items( 'post' ) );
+			if ( $post_id > 0 ) {
+				$post = get_post( $post_id );
+				if ( $post instanceof WP_Post && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
+					return new WP_Error(
+						'rest_post_invalid_id',
+						__( 'Invalid post ID.', 'hide-a-post' ),
+						array( 'status' => 404 )
+					);
+				}
+
 				return $response;
 			}
 
-			if ( $this->is_post_hidden( $post ) ) {
-				return new WP_Error(
-					'rest_post_invalid_id',
-					__( 'Invalid post ID.', 'hide-a-post' ),
-					array( 'status' => 404 )
-				);
+			$comment_id = $this->match_route_id( $route, '/wp/v2/comments' );
+			if ( $comment_id > 0 ) {
+				$comment = get_comment( $comment_id );
+				$post    = $comment instanceof WP_Comment ? get_post( (int) $comment->comment_post_ID ) : null;
+				if ( $post instanceof WP_Post && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
+					return new WP_Error(
+						'rest_comment_invalid_id',
+						__( 'Invalid comment ID.', 'hide-a-post' ),
+						array( 'status' => 404 )
+					);
+				}
 			}
 		} finally {
 			$this->is_filtering = false;
@@ -219,7 +270,350 @@ final class HAP_Query_Filter {
 	}
 
 	/**
-	 * Determines whether a specific post matches the plugin's hidden rules.
+	 * Prevents the oEmbed endpoint from describing hidden posts.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param int $post_id Post ID resolved from the requested URL.
+	 * @return int
+	 */
+	public function filter_oembed_request_post_id( $post_id ) {
+		$post_id = HAP_Plugin::parse_positive_int( $post_id );
+		if ( 0 === $post_id || $this->is_filtering ) {
+			return $post_id;
+		}
+
+		$this->is_filtering = true;
+
+		try {
+			$post = get_post( $post_id );
+			if ( $post instanceof WP_Post && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
+				return 0;
+			}
+		} finally {
+			$this->is_filtering = false;
+		}
+
+		return $post_id;
+	}
+
+	/**
+	 * Cancels canonical redirects (including `?p=<id>` and 404 slug guessing)
+	 * that would reveal a hidden post's permalink.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param string|false $redirect_url Redirect URL, or false to cancel.
+	 * @return string|false
+	 */
+	public function filter_redirect_canonical( $redirect_url ) {
+		if ( ! is_string( $redirect_url ) || '' === $redirect_url || $this->is_filtering ) {
+			return $redirect_url;
+		}
+
+		$this->is_filtering = true;
+
+		try {
+			if ( ! $this->should_filter_for_current_user() ) {
+				return $redirect_url;
+			}
+
+			// The guard is active, so url_to_postid() resolves hidden posts too.
+			$post = get_post( url_to_postid( $redirect_url ) );
+			if ( $post instanceof WP_Post && $this->is_post_hidden( $post ) ) {
+				return false;
+			}
+		} finally {
+			$this->is_filtering = false;
+		}
+
+		return $redirect_url;
+	}
+
+	/**
+	 * Excludes comments on hidden posts from WP_Comment_Query results.
+	 *
+	 * Uses the `post__not_in` query var (rather than SQL clauses) so the
+	 * exclusion is part of WP_Comment_Query's cache key.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param WP_Comment_Query $query Current comment query.
+	 * @return void
+	 */
+	public function filter_comment_query( $query ) {
+		if ( $this->is_filtering || ! ( $query instanceof WP_Comment_Query ) ) {
+			return;
+		}
+
+		$this->is_filtering = true;
+
+		try {
+			if ( ! $this->should_filter_for_current_user() ) {
+				return;
+			}
+
+			$hidden_ids = $this->get_hidden_post_ids();
+			if ( empty( $hidden_ids ) ) {
+				return;
+			}
+
+			$existing = isset( $query->query_vars['post__not_in'] ) ? wp_parse_id_list( $query->query_vars['post__not_in'] ) : array();
+
+			$query->query_vars['post__not_in'] = array_values( array_unique( array_merge( $existing, $hidden_ids ) ) );
+		} finally {
+			$this->is_filtering = false;
+		}
+	}
+
+	/**
+	 * Excludes comments on hidden posts from the site-wide comments feed.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param string $where Comment feed WHERE clause (the posts table is joined).
+	 * @return string
+	 */
+	public function filter_comment_feed_where( $where ) {
+		global $wpdb;
+
+		return $this->append_condition( $where, $wpdb->posts );
+	}
+
+	/**
+	 * Closes comments on hidden posts for filtered users (front end and REST).
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param bool $open    Whether comments are open.
+	 * @param int  $post_id Post ID.
+	 * @return bool
+	 */
+	public function filter_comments_open( $open, $post_id ) {
+		if ( ! $open || $this->is_filtering ) {
+			return (bool) $open;
+		}
+
+		$this->is_filtering = true;
+
+		try {
+			$post = get_post( $post_id );
+			if ( $post instanceof WP_Post && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
+				return false;
+			}
+		} finally {
+			$this->is_filtering = false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * Skips hidden posts in previous/next post links.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param string $where Adjacent post WHERE clause (posts table aliased as `p`).
+	 * @return string
+	 */
+	public function filter_adjacent_post_where( $where ) {
+		return $this->append_condition( $where, 'p' );
+	}
+
+	/**
+	 * Excludes hidden posts from wp_get_archives() output and counts.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param string $where Archives WHERE clause.
+	 * @return string
+	 */
+	public function filter_archives_where( $where ) {
+		global $wpdb;
+
+		return $this->append_condition( $where, $wpdb->posts );
+	}
+
+	/**
+	 * Invalidates cached post queries when category assignments change.
+	 *
+	 * WP_Query only adds the terms cache version to its cache key for native
+	 * tax queries, so category-only changes would otherwise serve stale results.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param int                   $object_id Object ID.
+	 * @param array<int|string>|int $terms     Terms passed to wp_set_object_terms().
+	 * @param int[]                 $tt_ids    Term taxonomy IDs.
+	 * @param string                $taxonomy  Taxonomy slug.
+	 * @return void
+	 */
+	public function flush_post_query_cache_on_set_terms( $object_id, $terms, $tt_ids, $taxonomy ) {
+		if ( 'category' === $taxonomy ) {
+			wp_cache_set_posts_last_changed();
+		}
+	}
+
+	/**
+	 * Invalidates cached post queries when category relationships are removed.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param int    $object_id Object ID.
+	 * @param int[]  $tt_ids    Term taxonomy IDs.
+	 * @param string $taxonomy  Taxonomy slug.
+	 * @return void
+	 */
+	public function flush_post_query_cache_on_delete_terms( $object_id, $tt_ids, $taxonomy ) {
+		if ( 'category' === $taxonomy ) {
+			wp_cache_set_posts_last_changed();
+		}
+	}
+
+	/**
+	 * Appends `AND NOT <hidden condition>` to a WHERE clause for filtered users.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param string $where      Existing WHERE clause.
+	 * @param string $post_alias Trusted posts table name or alias used in the query.
+	 * @return string
+	 */
+	private function append_condition( $where, $post_alias ) {
+		if ( $this->is_filtering ) {
+			return $where;
+		}
+
+		$this->is_filtering = true;
+
+		try {
+			if ( $this->should_filter_for_current_user() ) {
+				$condition = $this->get_hidden_post_condition( $post_alias );
+				if ( '' !== $condition ) {
+					$where .= ' AND NOT ' . $condition;
+				}
+			}
+		} finally {
+			$this->is_filtering = false;
+		}
+
+		return $where;
+	}
+
+	/**
+	 * Builds a prepared SQL boolean expression that is true for hidden posts.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param string $post_alias Trusted posts table name or alias (never user input).
+	 * @return string Prepared SQL expression, or an empty string when nothing is hidden.
+	 */
+	private function get_hidden_post_condition( $post_alias ) {
+		global $wpdb;
+
+		$hidden_categories = HAP_Plugin::get_hidden_category_ids();
+		if ( empty( $hidden_categories ) ) {
+			return '';
+		}
+
+		$category_placeholders = implode( ', ', array_fill( 0, count( $hidden_categories ), '%d' ) );
+
+		// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare -- Trusted table alias and placeholder lists built from integer counts.
+		$conditions = array(
+			(string) $wpdb->prepare(
+				"EXISTS (
+					SELECT 1
+					FROM {$wpdb->term_relationships} AS hap_tr
+					INNER JOIN {$wpdb->term_taxonomy} AS hap_tt
+						ON hap_tr.term_taxonomy_id = hap_tt.term_taxonomy_id
+					WHERE hap_tr.object_id = {$post_alias}.ID
+						AND hap_tt.taxonomy = 'category'
+						AND hap_tt.term_id IN ({$category_placeholders})
+				)",
+				$hidden_categories
+			),
+		);
+
+		$default_category_id = $this->get_hidden_default_category_id( $hidden_categories );
+		$admin_ids           = $default_category_id > 0 ? $this->get_administrator_ids() : array();
+
+		if ( ! empty( $admin_ids ) ) {
+			$author_placeholders = implode( ', ', array_fill( 0, count( $admin_ids ), '%d' ) );
+
+			$conditions[] = (string) $wpdb->prepare(
+				"(
+					{$post_alias}.post_author IN ({$author_placeholders})
+					AND EXISTS (
+						SELECT 1
+						FROM {$wpdb->term_relationships} AS hap_tr_default
+						INNER JOIN {$wpdb->term_taxonomy} AS hap_tt_default
+							ON hap_tr_default.term_taxonomy_id = hap_tt_default.term_taxonomy_id
+						WHERE hap_tr_default.object_id = {$post_alias}.ID
+							AND hap_tt_default.taxonomy = 'category'
+							AND hap_tt_default.term_id = %d
+					)
+				)",
+				array_merge( $admin_ids, array( $default_category_id ) )
+			);
+		}
+		// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
+
+		return "( {$post_alias}.post_type = 'post' AND ( " . implode( ' OR ', $conditions ) . ' ) )';
+	}
+
+	/**
+	 * Returns the IDs of all hidden posts, cached against post, term, and rule changes.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @return int[]
+	 */
+	private function get_hidden_post_ids() {
+		global $wpdb;
+
+		$hidden_categories = HAP_Plugin::get_hidden_category_ids();
+		if ( empty( $hidden_categories ) ) {
+			return array();
+		}
+
+		$default_category_id = $this->get_hidden_default_category_id( $hidden_categories );
+		$admin_ids           = $default_category_id > 0 ? $this->get_administrator_ids() : array();
+
+		$cache_key = sprintf(
+			'hidden_post_ids:%s:%s:%s',
+			md5( (string) wp_json_encode( array( $hidden_categories, $default_category_id, $admin_ids ) ) ),
+			wp_cache_get_last_changed( 'posts' ),
+			wp_cache_get_last_changed( 'terms' )
+		);
+
+		$cached = wp_cache_get( $cache_key, self::CACHE_GROUP );
+		if ( is_array( $cached ) ) {
+			return array_map( 'intval', $cached );
+		}
+
+		$condition = $this->get_hidden_post_condition( 'hap_p' );
+		if ( '' === $condition ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Condition is fully prepared above; results are cached.
+		$raw_ids = $wpdb->get_col( "SELECT hap_p.ID FROM {$wpdb->posts} AS hap_p WHERE {$condition}" );
+
+		$hidden_ids = array();
+		foreach ( (array) $raw_ids as $raw_id ) {
+			$post_id = HAP_Plugin::parse_positive_int( $raw_id );
+			if ( $post_id > 0 ) {
+				$hidden_ids[] = $post_id;
+			}
+		}
+
+		wp_cache_set( $cache_key, $hidden_ids, self::CACHE_GROUP );
+
+		return $hidden_ids;
+	}
+
+	/**
+	 * Determines whether a specific post matches the hidden rules.
 	 *
 	 * @since 2.0.0
 	 *
@@ -231,45 +625,51 @@ final class HAP_Query_Filter {
 			return false;
 		}
 
-		$hidden_categories = HAP_Plugin::get_hidden_category_ids();
-		if ( empty( $hidden_categories ) ) {
-			return false;
-		}
-
-		$raw_category_ids = wp_get_post_terms( $post->ID, 'category', array( 'fields' => 'ids' ) );
-		if ( is_wp_error( $raw_category_ids ) || empty( $raw_category_ids ) ) {
-			return false;
-		}
-
-		$post_category_ids = array();
-		foreach ( $raw_category_ids as $raw_term_id ) {
-			$term_id = HAP_Plugin::parse_positive_int( $raw_term_id );
-			if ( $term_id > 0 ) {
-				$post_category_ids[] = $term_id;
-			}
-		}
-
-		if ( empty( $post_category_ids ) ) {
-			return false;
-		}
-
-		if ( ! empty( array_intersect( $post_category_ids, $hidden_categories ) ) ) {
-			return true;
-		}
-
-		$default_category_id = absint( get_option( 'default_category', 0 ) );
-		if ( $default_category_id > 0 && in_array( $default_category_id, $post_category_ids, true ) ) {
-			$admin_ids = $this->get_administrator_ids();
-			if ( in_array( (int) $post->post_author, $admin_ids, true ) ) {
-				return true;
-			}
-		}
-
-		return false;
+		return in_array( (int) $post->ID, $this->get_hidden_post_ids(), true );
 	}
 
 	/**
-	 * Checks whether filtering should be bypassed for the given user ID.
+	 * Returns the default category ID when the Administrator default-category rule applies.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param int[] $hidden_categories Hidden category IDs.
+	 * @return int Default category ID, or 0 when the rule is disabled or redundant.
+	 */
+	private function get_hidden_default_category_id( array $hidden_categories ) {
+		$default_category_id = absint( get_option( 'default_category', 0 ) );
+
+		// Already hidden for everyone via the category rule.
+		if ( $default_category_id <= 0 || in_array( $default_category_id, $hidden_categories, true ) ) {
+			return 0;
+		}
+
+		/**
+		 * Filters whether Administrator-authored posts in the default category are hidden.
+		 *
+		 * @since 2.0.0
+		 *
+		 * @param bool $hide                Whether to hide Administrator default-category posts. Default true.
+		 * @param int  $default_category_id The site's default category ID.
+		 */
+		$hide = (bool) apply_filters( 'hap_hide_admin_default_category_posts', true, $default_category_id );
+
+		return $hide ? $default_category_id : 0;
+	}
+
+	/**
+	 * Checks whether the current user is subject to filtering and anything is hidden.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @return bool
+	 */
+	private function should_filter_for_current_user() {
+		return ! empty( HAP_Plugin::get_hidden_category_ids() ) && ! $this->is_bypassed_for_user( get_current_user_id() );
+	}
+
+	/**
+	 * Checks whether the given user may see hidden posts.
 	 *
 	 * @since 2.0.0
 	 *
@@ -277,22 +677,33 @@ final class HAP_Query_Filter {
 	 * @return bool
 	 */
 	private function is_bypassed_for_user( $user_id ) {
-		if ( defined( 'WP_CLI' ) && WP_CLI && 0 === get_current_user_id() ) {
-			return true;
+		$user_id  = (int) $user_id;
+		$bypassed = false;
+
+		if ( 0 === $user_id && defined( 'WP_CLI' ) && WP_CLI ) {
+			$bypassed = true;
+		} elseif ( $user_id > 0 && user_can( $user_id, 'manage_options' ) ) {
+			$bypassed = true;
 		}
 
-		if ( $user_id > 0 && user_can( $user_id, 'manage_options' ) ) {
-			return true;
-		}
-
-		return false;
+		/**
+		 * Filters whether a user can see posts hidden by Hide A Post.
+		 *
+		 * Applies to every visibility path (queries, capabilities, REST, comments, links).
+		 *
+		 * @since 2.0.0
+		 *
+		 * @param bool $bypassed Whether the user bypasses filtering.
+		 * @param int  $user_id  User ID being checked (0 for anonymous).
+		 */
+		return (bool) apply_filters( 'hap_user_can_view_hidden_posts', $bypassed, $user_id );
 	}
 
 	/**
-	 * Determines whether a query should be filtered by Hide A Post.
+	 * Determines whether a WP_Query should be filtered.
 	 *
 	 * Bypasses filtering for:
-	 * - Unauthenticated WP-CLI runs (default user ID 0) so commands like `wp post list` succeed cleanly.
+	 * - Unauthenticated WP-CLI runs (user ID 0) so commands like `wp post list` succeed cleanly.
 	 * - Users with the `manage_options` capability (Administrators).
 	 * - Queries that cannot return standard `post` objects (pages, nav menus, attachments, CPTs, etc.).
 	 *
@@ -302,13 +713,7 @@ final class HAP_Query_Filter {
 	 * @return bool
 	 */
 	private function should_filter_query( WP_Query $query ) {
-		$should_filter = true;
-
-		if ( $this->is_bypassed_for_user( get_current_user_id() ) ) {
-			$should_filter = false;
-		} elseif ( ! $this->query_targets_posts( $query ) ) {
-			$should_filter = false;
-		}
+		$should_filter = $this->should_filter_for_current_user() && $this->query_targets_posts( $query );
 
 		/**
 		 * Filters whether Hide A Post should filter the given WP_Query.
@@ -348,38 +753,83 @@ final class HAP_Query_Filter {
 	}
 
 	/**
-	 * Retrieves and caches Administrator user IDs for the current blog in this request.
+	 * Extracts a numeric ID from a REST route under the given collection base.
+	 *
+	 * Matches `<base>/<id>` and any sub-route such as `<base>/<id>/revisions`.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param string $route REST route being requested.
+	 * @param string $base  Collection route base, e.g. `/wp/v2/posts`.
+	 * @return int Matched ID, or 0.
+	 */
+	private function match_route_id( $route, $base ) {
+		if ( '' === $base ) {
+			return 0;
+		}
+
+		if ( 1 === preg_match( '#^' . preg_quote( untrailingslashit( $base ), '#' ) . '/(\d+)(?:/|$)#', $route, $matches ) ) {
+			return HAP_Plugin::parse_positive_int( $matches[1] );
+		}
+
+		return 0;
+	}
+
+	/**
+	 * Retrieves the IDs of users treated as Administrators for the current blog.
+	 *
+	 * Uses the same `manage_options` capability as the visibility bypass and
+	 * includes network Super Admins on Multisite.
 	 *
 	 * @since 2.0.0
 	 *
 	 * @return int[]
 	 */
 	private function get_administrator_ids() {
-		$blog_id = function_exists( 'get_current_blog_id' ) ? (int) get_current_blog_id() : 0;
+		$super_admins = is_multisite() ? get_super_admins() : array();
+		$memo_key     = get_current_blog_id() . ':' . wp_cache_get_last_changed( 'users' ) . ':' . md5( implode( ',', $super_admins ) );
 
-		if ( isset( $this->admin_user_ids_by_blog[ $blog_id ] ) ) {
-			return $this->admin_user_ids_by_blog[ $blog_id ];
+		if ( isset( $this->admin_ids_cache[ $memo_key ] ) ) {
+			return $this->admin_ids_cache[ $memo_key ];
 		}
 
 		$raw_ids = get_users(
 			array(
-				'role'   => 'administrator',
-				'fields' => 'ID',
+				'capability' => 'manage_options',
+				'fields'     => 'ID',
 			)
 		);
+		$raw_ids = is_array( $raw_ids ) ? $raw_ids : array();
 
-		$admin_ids = array();
-		if ( is_array( $raw_ids ) ) {
-			foreach ( $raw_ids as $raw_id ) {
-				$user_id = HAP_Plugin::parse_positive_int( $raw_id );
-				if ( $user_id > 0 ) {
-					$admin_ids[] = $user_id;
-				}
+		foreach ( $super_admins as $login ) {
+			$user = get_user_by( 'login', $login );
+			if ( $user instanceof WP_User ) {
+				$raw_ids[] = $user->ID;
 			}
 		}
 
-		$this->admin_user_ids_by_blog[ $blog_id ] = array_values( array_unique( $admin_ids ) );
+		/**
+		 * Filters the user IDs whose default-category posts are hidden.
+		 *
+		 * @since 2.0.0
+		 *
+		 * @param array<int|string> $raw_ids User IDs with `manage_options` (plus Super Admins on Multisite).
+		 */
+		$raw_ids = apply_filters( 'hap_administrator_ids', $raw_ids );
 
-		return $this->admin_user_ids_by_blog[ $blog_id ];
+		$admin_ids = array();
+		foreach ( is_array( $raw_ids ) ? $raw_ids : array() as $raw_id ) {
+			$user_id = HAP_Plugin::parse_positive_int( $raw_id );
+			if ( $user_id > 0 ) {
+				$admin_ids[] = $user_id;
+			}
+		}
+
+		$admin_ids = array_values( array_unique( $admin_ids ) );
+		sort( $admin_ids );
+
+		$this->admin_ids_cache[ $memo_key ] = $admin_ids;
+
+		return $admin_ids;
 	}
 }
