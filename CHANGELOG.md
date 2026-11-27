@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **menus:** Pre-redact whole top-level block trees, keep empty labels ([abce392](https://github.com/jrybacek/hide-a-post/commit/abce392639e3652bb298b395c5be7c39213621b3))
 - **menus:** Match core's empty-label test, drop unpublished submenus in REST ([4ccf5f1](https://github.com/jrybacek/hide-a-post/commit/4ccf5f10471e2a596f84e3ddf00f2edfd7362dac))
 - **menus:** Resolve Navigation refs with get_post() like core ([d48da42](https://github.com/jrybacek/hide-a-post/commit/d48da42818a8fffd7e2de27fa9e08509d7c201f0))
+- **release:** Exclude SECURITY.md from the release package ([051526a](https://github.com/jrybacek/hide-a-post/commit/051526a7d67aa92bd818a19a4cb11aa3639ef3b0))
 
 ### 📝 Documentation
 
@@ -40,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **changelog:** Update CHANGELOG.md with 2.0.0 modernization changes ([39e6242](https://github.com/jrybacek/hide-a-post/commit/39e62423284a84241ed55cd5721f20d4e7d9da66))
 - **plugin:** Document hidden paths, limitations, filters, and upgrade notes ([e0d8d12](https://github.com/jrybacek/hide-a-post/commit/e0d8d124fc8604c01775debea8a579bf98f634c1))
 - **screenshots:** Update settings page screenshot for 2.0.0 ([8ac9a50](https://github.com/jrybacek/hide-a-post/commit/8ac9a5010454dece63a4db4f645af66f64575556))
+- **changelog:** Update CHANGELOG.md for 2.0.0 release ([c2f59fd](https://github.com/jrybacek/hide-a-post/commit/c2f59fd77f74dac1b7bb23fbafce030cb5668aa9))
+- **readme:** Add CI and WordPress.org badges and Buy Me a Coffee link ([e430c36](https://github.com/jrybacek/hide-a-post/commit/e430c36f056f422b112a50ebd5182ef24515b022))
 
 ### 💄 Styling
 
@@ -58,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **git:** Add gitmoji and conventional commits convention and hook ([8d65c01](https://github.com/jrybacek/hide-a-post/commit/8d65c013623f1f5f33800fb15524c9f598f27f5c))
 - **changelog:** Configure git-cliff for changelog generation ([cf7cbaa](https://github.com/jrybacek/hide-a-post/commit/cf7cbaa917d171f90ba4eb6c4880ed7cd6cc4870))
+- **github:** Add security policy, Dependabot, and issue/PR templates ([#3](https://github.com/jrybacek/hide-a-post/issues/3)) ([7ba17bf](https://github.com/jrybacek/hide-a-post/commit/7ba17bf99367492003760f892ec71300624bf88a))
 
 ### 📜 Legacy Changes
 
