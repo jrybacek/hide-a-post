@@ -106,7 +106,7 @@ final class HAP_Query_Filter {
 
 			$category_placeholders = implode( ', ', array_fill( 0, count( $hidden_categories ), '%d' ) );
 
-			// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Dynamic placeholder list built exclusively from integer count.
+			// phpcs:disable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare -- Dynamic placeholder list built exclusively from integer count.
 			$where .= (string) $wpdb->prepare(
 				" AND NOT (
 					{$wpdb->posts}.post_type = 'post'
@@ -122,7 +122,7 @@ final class HAP_Query_Filter {
 				)",
 				$hidden_categories
 			);
-			// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			// phpcs:enable WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
 		} finally {
 			$this->is_filtering = false;
 		}
