@@ -747,7 +747,117 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 	 * @return void
 	 */
 	public function test_menus_skip_hidden_posts() {
-		$menu_id = wp_create_nav_menu( 'HAP menu' );
+		$menu_id = $this->create_menu_with_hidden_and_visible_items();
+
+		// Stored menu data is untouched; only wp_nav_menu() output is filtered.
+		$this->assertCount( 2, wp_get_nav_menu_items( $menu_id ) );
+
+		$html = (string) wp_nav_menu(
+			array(
+				'menu'     => $menu_id,
+				'echo'     => false,
+				'fallback' => false,
+			)
+		);
+		$this->assertStringContainsString( get_permalink( $this->posts['admin_public'] ), $html );
+		$this->assertStringNotContainsString( 'admin_secret', $html );
+
+		foreach ( array( array( 'kind' => 'post-type' ), array( 'type' => 'post' ) ) as $attrs ) {
+			$block = array(
+				'blockName' => 'core/navigation-link',
+				'attrs'     => $attrs + array( 'id' => $this->posts['admin_secret'] ),
+			);
+			$this->assertSame( '', apply_filters( 'render_block_core/navigation-link', '<li>link</li>', $block ) );
+
+			$block['attrs']['id'] = $this->posts['admin_public'];
+			$this->assertSame( '<li>link</li>', apply_filters( 'render_block_core/navigation-link', '<li>link</li>', $block ) );
+		}
+	}
+
+	/**
+	 * REST menu items (readable with `edit_posts`) are redacted for hidden posts.
+	 *
+	 * @return void
+	 */
+	public function test_rest_menu_items_redact_hidden_posts() {
+		$menu_id = $this->create_menu_with_hidden_and_visible_items();
+
+		wp_set_current_user( $this->editor_id );
+
+		$request = new WP_REST_Request( 'GET', '/wp/v2/menu-items' );
+		$request->set_query_params( array( 'menus' => $menu_id ) );
+		$response = rest_do_request( $request );
+
+		$this->assertSame( 200, $response->get_status() );
+
+		$by_object = array();
+		foreach ( $response->get_data() as $item ) {
+			$by_object[ (int) $item['object_id'] ] = $item;
+		}
+
+		$this->assertSame( '', $by_object[ $this->posts['admin_secret'] ]['url'] );
+		$this->assertSame( '(Private post)', $by_object[ $this->posts['admin_secret'] ]['title']['rendered'] );
+		$this->assertSame( get_permalink( $this->posts['admin_public'] ), $by_object[ $this->posts['admin_public'] ]['url'] );
+	}
+
+	/**
+	 * Navigation post content served over REST omits links to hidden posts.
+	 *
+	 * @return void
+	 */
+	public function test_rest_navigation_content_strips_hidden_links() {
+		$hidden_url = get_permalink( $this->posts['admin_secret'] );
+		$content    = sprintf(
+			'<!-- wp:navigation-link {"label":"Secret","type":"post","kind":"post-type","id":%1$d,"url":"%2$s"} /--><!-- wp:navigation-link {"label":"Public","type":"post","kind":"post-type","id":%3$d,"url":"%4$s"} /-->',
+			$this->posts['admin_secret'],
+			$hidden_url,
+			$this->posts['admin_public'],
+			get_permalink( $this->posts['admin_public'] )
+		);
+		$nav_id     = self::factory()->post->create(
+			array(
+				'post_type'    => 'wp_navigation',
+				'post_status'  => 'publish',
+				'post_content' => $content,
+			)
+		);
+
+		$request = new WP_REST_Request( 'GET', '/wp/v2/navigation/' . $nav_id );
+		$request->set_query_params( array( 'context' => 'embed' ) );
+		$raw = (string) rest_do_request( $request )->get_data()['content']['raw'];
+
+		$this->assertStringNotContainsString( $hidden_url, $raw );
+		$this->assertStringContainsString( '"Public"', $raw );
+		$this->assertSame( $content, get_post_field( 'post_content', $nav_id ) );
+	}
+
+	/**
+	 * A visitor's page load never converts the classic menu into a saved (filtered)
+	 * Navigation post; an Administrator's does, with complete data.
+	 *
+	 * @return void
+	 */
+	public function test_navigation_fallback_is_not_created_from_filtered_view() {
+		$this->create_menu_with_hidden_and_visible_items();
+
+		$this->assertFalse( apply_filters( 'wp_navigation_should_create_fallback', true ) );
+
+		wp_set_current_user( $this->admin_id );
+		$this->assertTrue( apply_filters( 'wp_navigation_should_create_fallback', true ) );
+
+		$fallback = WP_Navigation_Fallback::get_fallback();
+		$this->assertInstanceOf( WP_Post::class, $fallback );
+		$this->assertStringContainsString( (string) $this->posts['admin_secret'], $fallback->post_content );
+		$this->assertStringNotContainsString( '(Private post)', $fallback->post_content );
+	}
+
+	/**
+	 * Creates a classic menu with one hidden and one visible post item.
+	 *
+	 * @return int Menu ID.
+	 */
+	private function create_menu_with_hidden_and_visible_items() {
+		$menu_id = (int) wp_create_nav_menu( 'HAP menu ' . wp_generate_password( 6, false ) );
 		foreach ( array( 'admin_secret', 'admin_public' ) as $label ) {
 			wp_update_nav_menu_item(
 				$menu_id,
@@ -761,20 +871,7 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 			);
 		}
 
-		$object_ids = array_map( 'intval', wp_list_pluck( wp_get_nav_menu_items( $menu_id ), 'object_id' ) );
-		$this->assertSame( array( $this->posts['admin_public'] ), $object_ids );
-
-		$block = array(
-			'blockName' => 'core/navigation-link',
-			'attrs'     => array(
-				'kind' => 'post-type',
-				'id'   => $this->posts['admin_secret'],
-			),
-		);
-		$this->assertSame( '', apply_filters( 'render_block_core/navigation-link', '<li>link</li>', $block ) );
-
-		$block['attrs']['id'] = $this->posts['admin_public'];
-		$this->assertSame( '<li>link</li>', apply_filters( 'render_block_core/navigation-link', '<li>link</li>', $block ) );
+		return $menu_id;
 	}
 
 	/**

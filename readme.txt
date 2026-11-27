@@ -61,7 +61,7 @@ Yes. Starting in 2.0.0, Hide A Post safely handles WP-CLI's scoped loader and by
 
 = What is hidden, and what is not? =
 
-Hidden posts are removed from post lists, search, feeds, sitemaps, archives, previous/next links, the REST API, oEmbed, and wp-admin, and their comments are hidden too. Post counts are not adjusted: category counts and the "All (N)" totals in wp-admin still include hidden posts. Selecting a parent category does not hide posts that are only in its child categories. Pages and custom post types are never hidden.
+Hidden posts are removed from post lists, search, feeds, sitemaps, archives, previous/next links, menus, the REST API, oEmbed, and wp-admin, and their comments are hidden too. Where a hidden post is referenced by ID, non-Administrators see the title "(Private post)". Post counts are not adjusted: category counts and the "All (N)" totals in wp-admin still include hidden posts. Selecting a parent category does not hide posts that are only in its child categories. Pages and custom post types are never hidden.
 
 = Can developers change who sees hidden posts? =
 

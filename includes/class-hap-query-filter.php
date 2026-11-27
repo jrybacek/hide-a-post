@@ -96,7 +96,10 @@ final class HAP_Query_Filter {
 		// Core admin screens and template tags that read posts by ID.
 		add_filter( 'the_title', array( $this, 'filter_the_title' ), 10, 2 );
 		add_filter( 'attachment_link', array( $this, 'filter_attachment_link' ), 10, 2 );
-		add_filter( 'wp_setup_nav_menu_item', array( $this, 'filter_nav_menu_item' ) );
+		add_filter( 'wp_nav_menu_objects', array( $this, 'filter_nav_menu_objects' ) );
+		add_filter( 'rest_prepare_nav_menu_item', array( $this, 'filter_rest_menu_item' ), 10, 2 );
+		add_filter( 'rest_prepare_wp_navigation', array( $this, 'filter_rest_navigation' ) );
+		add_filter( 'wp_navigation_should_create_fallback', array( $this, 'filter_navigation_fallback_creation' ) );
 		add_filter( 'render_block_core/navigation-link', array( $this, 'filter_navigation_link_block' ), 10, 2 );
 		add_action( 'load-edit-comments.php', array( $this, 'guard_post_comments_screen' ) );
 		add_action( 'load-edit.php', array( $this, 'limit_empty_trash_to_visible_posts' ) );
@@ -365,24 +368,98 @@ final class HAP_Query_Filter {
 	}
 
 	/**
-	 * Drops classic menu items that point at hidden posts on the front end
-	 * (core removes items marked `_invalid` outside wp-admin).
+	 * Removes classic menu items that point at hidden posts from wp_nav_menu()
+	 * output only, leaving stored menu data untouched.
 	 *
 	 * @since 2.0.0
 	 *
-	 * @param object $menu_item Menu item object.
-	 * @return object
+	 * @param object[] $items Sorted menu item objects.
+	 * @return object[]
 	 */
-	public function filter_nav_menu_item( $menu_item ) {
-		if ( is_admin() || ! is_object( $menu_item ) || ! isset( $menu_item->type, $menu_item->object, $menu_item->object_id ) ) {
-			return $menu_item;
+	public function filter_nav_menu_objects( $items ) {
+		if ( ! is_array( $items ) ) {
+			return $items;
 		}
 
-		if ( 'post_type' === $menu_item->type && 'post' === $menu_item->object && $this->is_hidden_for_current_user( $this->to_id( $menu_item->object_id ) ) ) {
-			$menu_item->_invalid = true;
+		return array_values(
+			array_filter(
+				$items,
+				function ( $item ) {
+					return ! $this->is_hidden_menu_item( $item );
+				}
+			)
+		);
+	}
+
+	/**
+	 * Redacts REST menu items (readable by any user with `edit_posts`) that
+	 * point at hidden posts.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param WP_REST_Response $response  Response object.
+	 * @param object           $menu_item Menu item.
+	 * @return WP_REST_Response
+	 */
+	public function filter_rest_menu_item( $response, $menu_item ) {
+		if ( ! ( $response instanceof WP_REST_Response ) || ! $this->is_hidden_menu_item( $menu_item ) ) {
+			return $response;
 		}
 
-		return $menu_item;
+		$data = $response->get_data();
+		if ( is_array( $data ) ) {
+			$data['url']         = '';
+			$data['attr_title']  = '';
+			$data['description'] = '';
+			$data['title']       = array(
+				'raw'      => __( '(Private post)', 'hide-a-post' ),
+				'rendered' => __( '(Private post)', 'hide-a-post' ),
+			);
+			$response->set_data( $data );
+		}
+
+		return $response;
+	}
+
+	/**
+	 * Strips links to hidden posts from Navigation post content in REST
+	 * responses (core exposes `content.raw` to visitors for `wp_navigation`).
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param WP_REST_Response $response Response object.
+	 * @return WP_REST_Response
+	 */
+	public function filter_rest_navigation( $response ) {
+		if ( ! ( $response instanceof WP_REST_Response ) || ! $this->should_filter_for_current_user() ) {
+			return $response;
+		}
+
+		$data = $response->get_data();
+		if ( is_array( $data ) && isset( $data['content']['raw'] ) && is_string( $data['content']['raw'] ) ) {
+			$data['content']['raw'] = serialize_blocks( $this->strip_hidden_navigation_links( parse_blocks( $data['content']['raw'] ) ) );
+			$response->set_data( $data );
+		}
+
+		return $response;
+	}
+
+	/**
+	 * Prevents a filtered visitor's page load from converting the classic menu
+	 * into a saved Navigation post, which would persist filtered links and titles.
+	 * An unfiltered user's request creates it with complete data.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param bool $create Whether to create a fallback Navigation post.
+	 * @return bool
+	 */
+	public function filter_navigation_fallback_creation( $create ) {
+		if ( $create && ! $this->is_filtering && $this->should_filter_for_current_user() ) {
+			return false;
+		}
+
+		return (bool) $create;
 	}
 
 	/**
@@ -397,11 +474,78 @@ final class HAP_Query_Filter {
 	public function filter_navigation_link_block( $block_content, $block ) {
 		$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : array();
 
-		if ( isset( $attrs['kind'], $attrs['id'] ) && 'post-type' === $attrs['kind'] && $this->is_hidden_for_current_user( $this->to_id( $attrs['id'] ) ) ) {
-			return '';
+		return $this->is_hidden_navigation_target( $attrs ) ? '' : $block_content;
+	}
+
+	/**
+	 * Removes Navigation Link blocks and redacts Navigation Submenu blocks that
+	 * point at hidden posts, recursively.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param array<int, array<string, mixed>> $blocks Parsed blocks.
+	 * @return array<int, array<string, mixed>>
+	 */
+	private function strip_hidden_navigation_links( array $blocks ) {
+		$result = array();
+
+		foreach ( $blocks as $block ) {
+			$name  = isset( $block['blockName'] ) ? (string) $block['blockName'] : '';
+			$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : array();
+
+			if ( in_array( $name, array( 'core/navigation-link', 'core/navigation-submenu' ), true ) && $this->is_hidden_navigation_target( $attrs ) ) {
+				if ( 'core/navigation-link' === $name ) {
+					continue;
+				}
+
+				unset( $attrs['id'], $attrs['url'], $attrs['kind'], $attrs['type'], $attrs['title'] );
+				$attrs['label'] = __( '(Private post)', 'hide-a-post' );
+				$block['attrs'] = $attrs;
+			}
+
+			if ( ! empty( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) ) {
+				$block['innerBlocks'] = $this->strip_hidden_navigation_links( $block['innerBlocks'] );
+			}
+
+			$result[] = $block;
 		}
 
-		return $block_content;
+		return $result;
+	}
+
+	/**
+	 * Checks whether Navigation block attributes point at a hidden post,
+	 * using the same post-link test as core (`kind` or `type`).
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param array<string, mixed> $attrs Block attributes.
+	 * @return bool
+	 */
+	private function is_hidden_navigation_target( array $attrs ) {
+		if ( ! isset( $attrs['id'] ) ) {
+			return false;
+		}
+
+		$is_post_link = ( isset( $attrs['kind'] ) && 'post-type' === $attrs['kind'] ) || ( isset( $attrs['type'] ) && 'post' === $attrs['type'] );
+
+		return $is_post_link && $this->is_hidden_for_current_user( $this->to_id( $attrs['id'] ) );
+	}
+
+	/**
+	 * Checks whether a classic menu item points at a post hidden from the current user.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param mixed $item Menu item object.
+	 * @return bool
+	 */
+	private function is_hidden_menu_item( $item ) {
+		return is_object( $item )
+			&& isset( $item->type, $item->object, $item->object_id )
+			&& 'post_type' === $item->type
+			&& 'post' === $item->object
+			&& $this->is_hidden_for_current_user( $this->to_id( $item->object_id ) );
 	}
 
 	/**

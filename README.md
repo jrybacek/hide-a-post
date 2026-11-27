@@ -53,7 +53,7 @@ Once configured:
 - Post counts are not adjusted: category counts and the "All (N)" totals in wp-admin still include hidden posts.
 - Selecting a parent category does not hide posts that are only in its child categories.
 - Only the `post` post type is filtered; pages and custom post types are never hidden.
-- For non-Administrators, a hidden post's title reads "(Private post)" wherever it is shown by ID, and menu items (classic menus and Navigation Link blocks) that point at hidden posts are not shown.
+- For non-Administrators, a hidden post's title reads "(Private post)" wherever it is shown by ID, and menu items (classic menus and Navigation Link blocks) that point at hidden posts are not shown. On a block theme with no saved Navigation menu yet, the classic menu is converted on the first page load by an Administrator (not by a visitor, which would save a filtered copy).
 
 ### Filters
 
