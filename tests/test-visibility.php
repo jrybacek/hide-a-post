@@ -518,6 +518,110 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 	}
 
 	/**
+	 * A `/0` route segment, a JSON body `id`, or a non-canonical `id` cannot skip the guard.
+	 *
+	 * @return void
+	 */
+	public function test_rest_zero_route_and_noncanonical_ids_are_checked() {
+		$hidden         = $this->posts['admin_secret'];
+		$hidden_comment = self::factory()->comment->create( array( 'comment_post_ID' => $hidden ) );
+
+		$request = new WP_REST_Request( 'GET', '/wp/v2/posts/0' );
+		$request->set_query_params( array( 'id' => $hidden ) );
+		$this->assertSame( 404, rest_do_request( $request )->get_status() );
+
+		$request = new WP_REST_Request( 'GET', '/wp/v2/comments/0' );
+		$request->set_query_params( array( 'id' => $hidden_comment ) );
+		$this->assertSame( 404, rest_do_request( $request )->get_status() );
+
+		$request = new WP_REST_Request( 'GET', '/wp/v2/posts/0' );
+		$request->set_header( 'Content-Type', 'application/json' );
+		$request->set_body( (string) wp_json_encode( array( 'id' => $hidden ) ) );
+		$this->assertSame( 404, rest_do_request( $request )->get_status() );
+
+		wp_set_current_user( $this->editor_id );
+		$request = new WP_REST_Request( 'GET', '/wp/v2/posts/' . $this->posts['editor_public'] . '/autosaves' );
+		$request->set_query_params( array( 'id' => '+' . $hidden ) );
+		$this->assertSame( 404, rest_do_request( $request )->get_status() );
+	}
+
+	/**
+	 * A save that assigns a hidden category can still write its post meta.
+	 *
+	 * @return void
+	 */
+	public function test_rest_save_into_hidden_category_with_meta_succeeds() {
+		register_post_meta(
+			'post',
+			'hap_test_note',
+			array(
+				'show_in_rest' => true,
+				'single'       => true,
+				'type'         => 'string',
+			)
+		);
+
+		wp_set_current_user( $this->editor_id );
+
+		$post_id = $this->posts['editor_public'];
+		$request = new WP_REST_Request( 'POST', '/wp/v2/posts/' . $post_id );
+		$request->set_param( 'categories', array( $this->secret_cat ) );
+		$request->set_param( 'meta', array( 'hap_test_note' => 'saved' ) );
+
+		$status = rest_do_request( $request )->get_status();
+
+		unregister_post_meta( 'post', 'hap_test_note' );
+
+		$this->assertSame( 200, $status );
+		$this->assertSame( 'saved', get_post_meta( $post_id, 'hap_test_note', true ) );
+		$this->assertFalse( user_can( $this->editor_id, 'edit_post', $post_id ) );
+	}
+
+	/**
+	 * Only Administrators can delete a hidden category.
+	 *
+	 * @return void
+	 */
+	public function test_editors_cannot_delete_hidden_categories() {
+		$this->assertFalse( user_can( $this->editor_id, 'delete_term', $this->secret_cat ) );
+		$this->assertTrue( user_can( $this->editor_id, 'delete_term', $this->public_cat ) );
+		$this->assertTrue( user_can( $this->admin_id, 'delete_term', $this->secret_cat ) );
+	}
+
+	/**
+	 * Creating a subsite does not run Hide A Post option queries against missing tables.
+	 *
+	 * @return void
+	 */
+	public function test_site_creation_causes_no_database_errors() {
+		if ( ! is_multisite() ) {
+			$this->markTestSkipped( 'Multisite only.' );
+		}
+
+		global $EZSQL_ERROR;
+
+		$before = is_array( $EZSQL_ERROR ) ? count( $EZSQL_ERROR ) : 0;
+
+		$site_id = wp_insert_site(
+			array(
+				'domain' => 'example.org',
+				'path'   => '/hap-' . wp_generate_password( 8, false ) . '/',
+			)
+		);
+
+		$errors = array_slice( is_array( $EZSQL_ERROR ) ? $EZSQL_ERROR : array(), $before );
+		$hap    = array_filter(
+			$errors,
+			static function ( $error ) {
+				return false !== strpos( (string) $error['query'], "'hap" );
+			}
+		);
+
+		$this->assertIsInt( $site_id );
+		$this->assertSame( array(), array_values( $hap ) );
+	}
+
+	/**
 	 * A visible post's own comment feed still works (no posts-table join there).
 	 *
 	 * @return void

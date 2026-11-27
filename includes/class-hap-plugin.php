@@ -41,6 +41,14 @@ final class HAP_Plugin {
 	private static $instance = null;
 
 	/**
+	 * Blog IDs whose settings schema has been checked in this request.
+	 *
+	 * @since 2.0.0
+	 * @var array<int, bool>
+	 */
+	private static $checked_blogs = array();
+
+	/**
 	 * Settings handler instance.
 	 *
 	 * @since 2.0.0
@@ -111,12 +119,6 @@ final class HAP_Plugin {
 		$this->query_filter->init();
 
 		add_action( 'delete_category', array( __CLASS__, 'prune_deleted_category' ) );
-
-		if ( is_multisite() ) {
-			// Migrate sites that are queried via switch_to_blog() before their first load.
-			add_action( 'switch_blog', array( __CLASS__, 'maybe_upgrade' ), 10, 0 );
-		}
-
 		add_filter( 'plugin_action_links_' . HAP_BASENAME, array( $this, 'add_action_links' ) );
 
 		if ( is_admin() ) {
@@ -149,6 +151,8 @@ final class HAP_Plugin {
 	 * @return void
 	 */
 	public static function maybe_upgrade() {
+		self::$checked_blogs[ get_current_blog_id() ] = true;
+
 		if ( self::DB_VERSION === get_option( self::DB_VERSION_OPTION ) ) {
 			return;
 		}
@@ -243,7 +247,38 @@ final class HAP_Plugin {
 	 * @return int[]
 	 */
 	public static function get_hidden_category_ids() {
+		if ( is_multisite() ) {
+			self::maybe_upgrade_switched_site();
+		}
+
 		return self::normalize_category_ids( get_option( HAP_OPTION_NAME, array() ) );
+	}
+
+	/**
+	 * Migrates legacy settings on a site reached through switch_to_blog()
+	 * before that site has loaded the plugin itself.
+	 *
+	 * Runs lazily on the first read per site, skips site installation, and only
+	 * touches sites that already store Hide A Post settings.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @return void
+	 */
+	private static function maybe_upgrade_switched_site() {
+		$blog_id = get_current_blog_id();
+
+		if ( isset( self::$checked_blogs[ $blog_id ] ) || wp_installing() ) {
+			return;
+		}
+
+		self::$checked_blogs[ $blog_id ] = true;
+
+		if ( self::DB_VERSION === get_option( self::DB_VERSION_OPTION ) || false === get_option( HAP_OPTION_NAME, false ) ) {
+			return;
+		}
+
+		self::maybe_upgrade();
 	}
 
 	/**

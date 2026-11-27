@@ -49,6 +49,22 @@ final class HAP_Query_Filter {
 	private $is_filtering = false;
 
 	/**
+	 * Post ID being saved by the current REST request (0 when none).
+	 *
+	 * @since 2.0.0
+	 * @var int
+	 */
+	private $saving_post_id = 0;
+
+	/**
+	 * User ID performing the current REST save (0 when none).
+	 *
+	 * @since 2.0.0
+	 * @var int
+	 */
+	private $saving_user_id = 0;
+
+	/**
 	 * Registers all visibility filter hooks.
 	 *
 	 * @since 2.0.0
@@ -63,7 +79,9 @@ final class HAP_Query_Filter {
 
 		// Direct access by ID.
 		add_filter( 'map_meta_cap', array( $this, 'filter_map_meta_cap' ), 10, 4 );
+		add_filter( 'map_meta_cap', array( $this, 'filter_delete_term_cap' ), 10, 4 );
 		add_filter( 'rest_request_before_callbacks', array( $this, 'filter_rest_request' ), 10, 3 );
+		add_filter( 'rest_request_after_callbacks', array( $this, 'end_rest_save' ) );
 		add_filter( 'oembed_request_post_id', array( $this, 'filter_requested_post_id' ) );
 		add_filter( 'old_slug_redirect_post_id', array( $this, 'filter_requested_post_id' ) );
 		add_filter( 'redirect_canonical', array( $this, 'filter_redirect_canonical' ) );
@@ -196,6 +214,11 @@ final class HAP_Query_Filter {
 			return $caps;
 		}
 
+		// The post was visible when this user's REST save started.
+		if ( $post_id === $this->saving_post_id && (int) $user_id === $this->saving_user_id ) {
+			return $caps;
+		}
+
 		$this->is_filtering = true;
 
 		try {
@@ -212,6 +235,56 @@ final class HAP_Query_Filter {
 		}
 
 		return $caps;
+	}
+
+	/**
+	 * Prevents filtered users from deleting a hidden category, which would
+	 * reveal its posts and, if it is the last one, disable all filtering.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param string[] $caps    Primitive capabilities required of the user.
+	 * @param string   $cap     Capability being checked.
+	 * @param int      $user_id User ID being checked.
+	 * @param mixed[]  $args    Additional capability arguments (term ID at index 0).
+	 * @return string[]
+	 */
+	public function filter_delete_term_cap( $caps, $cap, $user_id, $args ) {
+		if ( 'delete_term' !== $cap || $this->is_filtering || ! is_array( $args ) || ! isset( $args[0] ) ) {
+			return $caps;
+		}
+
+		$term_id = $this->to_id( $args[0] );
+		if ( $term_id <= 0 || ! in_array( $term_id, HAP_Plugin::get_hidden_category_ids(), true ) ) {
+			return $caps;
+		}
+
+		$this->is_filtering = true;
+
+		try {
+			if ( ! $this->is_bypassed_for_user( (int) $user_id ) ) {
+				return array( 'do_not_allow' );
+			}
+		} finally {
+			$this->is_filtering = false;
+		}
+
+		return $caps;
+	}
+
+	/**
+	 * Ends the save exemption set by {@see HAP_Query_Filter::filter_rest_request()}.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param mixed $response Result to send to the client.
+	 * @return mixed
+	 */
+	public function end_rest_save( $response ) {
+		$this->saving_post_id = 0;
+		$this->saving_user_id = 0;
+
+		return $response;
 	}
 
 	/**
@@ -239,12 +312,13 @@ final class HAP_Query_Filter {
 
 		try {
 			// Query and body `id`/`parent` values take precedence over URL
-			// parameters in WP_REST_Request, so check every candidate ID.
-			$post_id = $this->match_route_id( $route, rest_get_route_for_post_type_items( 'post' ) );
-			if ( $post_id > 0 ) {
-				$candidates = array( $post_id, $request->get_param( 'id' ), $request->get_param( 'parent' ) );
+			// parameters in WP_REST_Request, so check every candidate ID on any
+			// matched item route (including `/0`), cast the way core casts them.
+			$route_post_id = $this->match_route_id( $route, rest_get_route_for_post_type_items( 'post' ) );
+			if ( null !== $route_post_id ) {
+				$candidates = array( $route_post_id, $request->get_param( 'id' ), $request->get_param( 'parent' ) );
 				foreach ( $candidates as $candidate ) {
-					$candidate_id = HAP_Plugin::parse_positive_int( $candidate );
+					$candidate_id = $this->to_id( $candidate );
 					$post         = $candidate_id > 0 ? get_post( $candidate_id ) : null;
 					if ( $post instanceof WP_Post && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
 						return new WP_Error(
@@ -255,13 +329,21 @@ final class HAP_Query_Filter {
 					}
 				}
 
+				// A save that starts on a visible post may assign a hidden category;
+				// let it finish its own meta and term writes within this request.
+				if ( ! in_array( $request->get_method(), array( 'GET', 'HEAD' ), true ) ) {
+					$target_id            = $this->to_id( $request->get_param( 'id' ) );
+					$this->saving_post_id = $target_id > 0 ? $target_id : $route_post_id;
+					$this->saving_user_id = get_current_user_id();
+				}
+
 				return $response;
 			}
 
-			$comment_id = $this->match_route_id( $route, '/wp/v2/comments' );
-			if ( $comment_id > 0 ) {
-				foreach ( array( $comment_id, $request->get_param( 'id' ) ) as $candidate ) {
-					$candidate_id = HAP_Plugin::parse_positive_int( $candidate );
+			$route_comment_id = $this->match_route_id( $route, '/wp/v2/comments' );
+			if ( null !== $route_comment_id ) {
+				foreach ( array( $route_comment_id, $request->get_param( 'id' ) ) as $candidate ) {
+					$candidate_id = $this->to_id( $candidate );
 					$comment      = $candidate_id > 0 ? get_comment( $candidate_id ) : null;
 					$post         = $comment instanceof WP_Comment ? get_post( (int) $comment->comment_post_ID ) : null;
 					if ( $post instanceof WP_Post && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
@@ -792,19 +874,33 @@ final class HAP_Query_Filter {
 	 *
 	 * @param string $route REST route being requested.
 	 * @param string $base  Collection route base, e.g. `/wp/v2/posts`.
-	 * @return int Matched ID, or 0.
+	 * @return int|null Matched ID (possibly 0), or null when the route does not match.
 	 */
 	private function match_route_id( $route, $base ) {
 		if ( '' === $base ) {
-			return 0;
+			return null;
 		}
 
 		// Case-insensitive, like WP_REST_Server::match_request_to_handler().
 		if ( 1 === preg_match( '#^' . preg_quote( untrailingslashit( $base ), '#' ) . '/(\d+)(?:/|$)#i', $route, $matches ) ) {
-			return HAP_Plugin::parse_positive_int( $matches[1] );
+			return $this->to_id( $matches[1] );
 		}
 
-		return 0;
+		return null;
+	}
+
+	/**
+	 * Casts a request value to an ID the way core's get_post()/get_comment() do.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param mixed $value Candidate ID.
+	 * @return int ID, or 0 for non-scalar or non-positive values.
+	 */
+	private function to_id( $value ) {
+		$id = is_scalar( $value ) ? (int) $value : 0;
+
+		return $id > 0 ? $id : 0;
 	}
 
 	/**

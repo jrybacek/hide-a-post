@@ -80,7 +80,7 @@ Yes. Use the `hap_user_can_view_hidden_posts` filter to grant or deny access per
 * Fixed fatal `TypeError` crash when listing posts via WP-CLI.
 * Replaced comma-separated category text input with hierarchical category checkboxes on the settings screen.
 * Replaced hardcoded `wp_` table prefixes and raw SQL interpolation with dynamic `$wpdb` table names, qualified columns, and parameterized `NOT EXISTS` queries via `$wpdb->prepare()`.
-* Blocked direct access to hidden posts by ID: capabilities (`map_meta_cap`, including `WP_Post` arguments), REST API reads of posts and their sub-resources (404 before the endpoint runs), revisions, oEmbed, old-slug redirects, and canonical/404 slug-guess redirects.
+* Blocked direct access to hidden posts by ID: capabilities (`map_meta_cap`, including `WP_Post` arguments), REST API reads of posts and their sub-resources (404 before the endpoint runs), revisions, deletion of hidden categories by non-Administrators, oEmbed, old-slug redirects, and canonical/404 slug-guess redirects.
 * Hid comments on hidden posts from comment queries, the REST API, the comments feed, and Recent Comments, and closed new comments on them.
 * Excluded hidden posts from previous/next post links, `wp_get_archives()`, and `get_posts()` calls that use `suppress_filters`.
 * Treated every user with the `manage_options` capability (plus Super Admins on Multisite) as an Administrator for the default-category rule.
