@@ -676,6 +676,67 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 	}
 
 	/**
+	 * Hidden post titles read by ID are replaced for filtered users.
+	 *
+	 * @return void
+	 */
+	public function test_hidden_post_titles_are_replaced() {
+		wp_set_current_user( $this->editor_id );
+
+		$this->assertSame( '(Private post)', get_the_title( $this->posts['admin_secret'] ) );
+		$this->assertSame( 'HAP admin_public', get_the_title( $this->posts['admin_public'] ) );
+
+		wp_set_current_user( $this->admin_id );
+		$this->assertSame( 'HAP admin_secret', get_the_title( $this->posts['admin_secret'] ) );
+	}
+
+	/**
+	 * The post-scoped Comments screen is blocked for hidden posts.
+	 *
+	 * @return void
+	 */
+	public function test_post_comments_screen_is_blocked_for_hidden_posts() {
+		wp_set_current_user( $this->editor_id );
+
+		$_REQUEST['p'] = (string) $this->posts['editor_public'];
+		do_action( 'load-edit-comments.php' );
+
+		$_REQUEST['p'] = (string) $this->posts['admin_secret'];
+		try {
+			do_action( 'load-edit-comments.php' );
+			$this->fail( 'Expected wp_die().' );
+		} catch ( WPDieException $e ) {
+			$this->assertStringContainsString( 'not allowed', $e->getMessage() );
+		} finally {
+			unset( $_REQUEST['p'] );
+		}
+	}
+
+	/**
+	 * "Empty Trash" deletes only the trashed posts the Editor can see.
+	 *
+	 * @return void
+	 */
+	public function test_empty_trash_is_limited_to_visible_posts() {
+		wp_trash_post( $this->posts['admin_secret'] );
+		wp_trash_post( $this->posts['editor_public'] );
+
+		wp_set_current_user( $this->editor_id );
+
+		$_REQUEST['delete_all']  = 'Empty Trash';
+		$_REQUEST['post_status'] = 'trash';
+
+		do_action( 'load-edit.php' );
+
+		$post = $_REQUEST['post'];
+		$kept = isset( $_REQUEST['delete_all'] );
+		unset( $_REQUEST['delete_all'], $_REQUEST['post_status'], $_REQUEST['post'], $_REQUEST['action'] );
+
+		$this->assertFalse( $kept );
+		$this->assertSame( array( (string) $this->posts['editor_public'] ), $post );
+	}
+
+	/**
 	 * Only Administrators can delete a hidden category.
 	 *
 	 * @return void

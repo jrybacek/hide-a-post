@@ -90,8 +90,13 @@ final class HAP_Query_Filter {
 		add_filter( 'map_meta_cap', array( $this, 'filter_delete_term_cap' ), 10, 4 );
 		add_filter( 'rest_request_before_callbacks', array( $this, 'filter_rest_request' ), 10, 3 );
 		add_filter( 'rest_request_after_callbacks', array( $this, 'end_rest_save' ), 10, 3 );
-		add_action( 'rest_insert_post', array( $this, 'track_rest_save_post' ), 10, 2 );
+		add_action( 'rest_insert_post', array( $this, 'track_rest_save_post' ), 1, 2 );
 		add_action( 'pre_delete_term', array( $this, 'guard_hidden_category_deletion' ), 10, 2 );
+
+		// Core admin screens and template tags that read posts by ID.
+		add_filter( 'the_title', array( $this, 'filter_the_title' ), 10, 2 );
+		add_action( 'load-edit-comments.php', array( $this, 'guard_post_comments_screen' ) );
+		add_action( 'load-edit.php', array( $this, 'limit_empty_trash_to_visible_posts' ) );
 		add_filter( 'oembed_request_post_id', array( $this, 'filter_requested_post_id' ) );
 		add_filter( 'old_slug_redirect_post_id', array( $this, 'filter_requested_post_id' ) );
 		add_filter( 'redirect_canonical', array( $this, 'filter_redirect_canonical' ) );
@@ -313,6 +318,101 @@ final class HAP_Query_Filter {
 			'',
 			array( 'response' => 403 )
 		);
+	}
+
+	/**
+	 * Replaces hidden post titles read by ID (admin screens such as the Media
+	 * Library's parent column, theme template tags) for filtered users.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param string $title   Post title.
+	 * @param mixed  $post_id Post ID.
+	 * @return string
+	 */
+	public function filter_the_title( $title, $post_id = 0 ) {
+		$post_id = $this->to_id( $post_id );
+		if ( $post_id <= 0 || $this->is_filtering || $post_id === $this->saving_post_id ) {
+			return $title;
+		}
+
+		$this->is_filtering = true;
+
+		try {
+			$post = get_post( $post_id );
+			if ( $post instanceof WP_Post && 'post' === $post->post_type && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
+				return __( '(Private post)', 'hide-a-post' );
+			}
+		} finally {
+			$this->is_filtering = false;
+		}
+
+		return $title;
+	}
+
+	/**
+	 * Blocks the post-scoped Comments screen (`edit-comments.php?p=<id>`), which
+	 * prints the post's title and permalink, for hidden posts.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @return void
+	 */
+	public function guard_post_comments_screen() {
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only screen parameter.
+		$post_id = isset( $_REQUEST['p'] ) ? $this->to_id( sanitize_text_field( wp_unslash( $_REQUEST['p'] ) ) ) : 0;
+		$post    = $post_id > 0 ? get_post( $post_id ) : null;
+
+		if ( $post instanceof WP_Post && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
+			wp_die(
+				esc_html__( 'Sorry, you are not allowed to view this item.', 'hide-a-post' ),
+				'',
+				array( 'response' => 403 )
+			);
+		}
+	}
+
+	/**
+	 * Turns "Empty Trash" into a bulk delete of the posts the user can see.
+	 *
+	 * Core collects every trashed post with direct SQL and stops at the first one
+	 * the user cannot delete, after deleting the ones before it. Hidden trashed
+	 * posts are left for an Administrator.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @return void
+	 */
+	public function limit_empty_trash_to_visible_posts() {
+		// phpcs:disable WordPress.Security.NonceVerification.Recommended -- edit.php verifies the bulk-posts nonce after this hook.
+		if ( ! isset( $_REQUEST['delete_all'] ) && ! isset( $_REQUEST['delete_all2'] ) ) {
+			return;
+		}
+
+		$post_type   = isset( $_REQUEST['post_type'] ) ? sanitize_key( wp_unslash( $_REQUEST['post_type'] ) ) : 'post';
+		$post_status = isset( $_REQUEST['post_status'] ) ? sanitize_key( wp_unslash( $_REQUEST['post_status'] ) ) : '';
+
+		if ( 'post' !== $post_type || '' === $post_status || ! $this->should_filter_for_current_user() ) {
+			return;
+		}
+
+		$visible_ids = get_posts(
+			array(
+				'post_type'        => 'post',
+				'post_status'      => $post_status,
+				'fields'           => 'ids',
+				'posts_per_page'   => -1,
+				'suppress_filters' => false,
+			)
+		);
+
+		foreach ( array( 'delete_all', 'delete_all2' ) as $key ) {
+			unset( $_REQUEST[ $key ], $_GET[ $key ], $_POST[ $key ] );
+		}
+
+		$_REQUEST['action'] = 'delete';
+		$_REQUEST['post']   = array_map( 'strval', array_map( 'intval', $visible_ids ) );
+		// phpcs:enable WordPress.Security.NonceVerification.Recommended
 	}
 
 	/**
