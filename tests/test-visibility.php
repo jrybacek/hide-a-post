@@ -928,6 +928,41 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 	}
 
 	/**
+	 * Hidden submenus inside an inline Navigation block or a Group are redacted
+	 * (their attributes are not left cached unredacted), and label-less hidden
+	 * submenus stay suppressed as core does.
+	 *
+	 * @return void
+	 */
+	public function test_wrapped_hidden_submenus_are_redacted() {
+		$submenu = sprintf(
+			'<!-- wp:navigation-submenu {"label":"SecretParent","type":"post","kind":"post-type","id":%1$d,"url":"%2$s","description":"SecretDescription"} --><!-- wp:navigation-link {"label":"PublicChild","type":"post","kind":"post-type","id":%3$d,"url":"%4$s"} /--><!-- /wp:navigation-submenu -->',
+			$this->posts['admin_secret'],
+			get_permalink( $this->posts['admin_secret'] ),
+			$this->posts['admin_public'],
+			get_permalink( $this->posts['admin_public'] )
+		);
+
+		$wrappers = array(
+			'inline navigation' => '<!-- wp:navigation -->' . $submenu . '<!-- /wp:navigation -->',
+			'group'             => '<!-- wp:group --><div class="wp-block-group">' . $submenu . '</div><!-- /wp:group -->',
+		);
+
+		foreach ( $wrappers as $label => $markup ) {
+			$html = do_blocks( $markup );
+			$this->assertStringNotContainsString( 'SecretParent', $html, $label );
+			$this->assertStringNotContainsString( 'SecretDescription', $html, $label );
+			$this->assertStringNotContainsString( get_permalink( $this->posts['admin_secret'] ), $html, $label );
+			$this->assertStringContainsString( 'PublicChild', $html, $label );
+		}
+
+		$label_less = str_replace( '"label":"SecretParent",', '"label":"",', $submenu );
+		$html       = do_blocks( $label_less );
+		$this->assertStringNotContainsString( '(Private post)', $html );
+		$this->assertStringNotContainsString( 'PublicChild', $html );
+	}
+
+	/**
 	 * A Navigation block whose `ref` is a hidden post renders nothing, including
 	 * through the REST block renderer.
 	 *

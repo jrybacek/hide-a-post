@@ -103,7 +103,7 @@ final class HAP_Query_Filter {
 		add_filter( 'render_block_core/navigation-link', array( $this, 'filter_navigation_link_block' ), 10, 2 );
 		add_filter( 'render_block_core/navigation-submenu', array( $this, 'filter_navigation_submenu_block' ), 10, 3 );
 		add_filter( 'block_core_navigation_render_inner_blocks', array( $this, 'redact_navigation_inner_blocks' ) );
-		add_filter( 'render_block_data', array( $this, 'redact_top_level_submenu_data' ) );
+		add_filter( 'render_block_data', array( $this, 'redact_top_level_submenu_data' ), 10, 3 );
 		add_filter( 'register_block_type_args', array( $this, 'wrap_navigation_render_callback' ), 10, 2 );
 		add_action( 'load-edit-comments.php', array( $this, 'guard_post_comments_screen' ) );
 		add_action( 'load-edit.php', array( $this, 'limit_empty_trash_to_visible_posts' ) );
@@ -544,20 +544,26 @@ final class HAP_Query_Filter {
 	}
 
 	/**
-	 * Redacts hidden-post submenus in a top-level Navigation Submenu block's
-	 * tree before it is built, so render_block() renders it once.
+	 * Redacts hidden-post submenus anywhere in a top-level block's tree before
+	 * any WP_Block in it is built (inline Navigation blocks, groups, patterns,
+	 * standalone submenus), so each renders once with redacted attributes.
+	 *
+	 * Inner blocks are skipped: WP_Block::render() runs this filter on a child
+	 * only after constructing it, when its attributes may already be cached.
 	 *
 	 * @since 2.0.0
 	 *
 	 * @param array<string, mixed> $parsed_block Parsed block.
+	 * @param array<string, mixed> $source_block Original parsed block.
+	 * @param mixed                $parent_block Parent block instance, or null at the top level.
 	 * @return array<string, mixed>
 	 */
-	public function redact_top_level_submenu_data( $parsed_block ) {
-		if ( is_array( $parsed_block ) && isset( $parsed_block['blockName'] ) && 'core/navigation-submenu' === $parsed_block['blockName'] ) {
-			return $this->redact_hidden_submenus( $parsed_block );
+	public function redact_top_level_submenu_data( $parsed_block, $source_block = array(), $parent_block = null ) {
+		if ( null !== $parent_block || ! is_array( $parsed_block ) ) {
+			return $parsed_block;
 		}
 
-		return $parsed_block;
+		return $this->redact_hidden_submenus( $parsed_block );
 	}
 
 	/**
@@ -729,8 +735,12 @@ final class HAP_Query_Filter {
 	 * @return array<string, mixed>
 	 */
 	private function redact_navigation_attrs( array $attrs ) {
+		$has_label = isset( $attrs['label'] ) && '' !== trim( (string) $attrs['label'] );
+
 		unset( $attrs['id'], $attrs['url'], $attrs['kind'], $attrs['type'], $attrs['title'], $attrs['description'] );
-		$attrs['label'] = __( '(Private post)', 'hide-a-post' );
+
+		// Keep an empty label empty so core still suppresses label-less items.
+		$attrs['label'] = $has_label ? __( '(Private post)', 'hide-a-post' ) : '';
 
 		return $attrs;
 	}
