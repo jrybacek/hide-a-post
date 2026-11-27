@@ -1,18 +1,23 @@
 * text=auto eol=lf
 
+# Exclude development files from `git archive` and the WordPress.org SVN
+# deploy (10up/action-wordpress-plugin-deploy exports with `git archive`).
 /.github export-ignore
 /.githooks export-ignore
 /.gitattributes export-ignore
 /.gitignore export-ignore
 /.gitmessage export-ignore
+/.phpunit.result.cache export-ignore
+/assets export-ignore
 /cliff.toml export-ignore
 /composer.json export-ignore
 /composer.lock export-ignore
+/CHANGELOG.md export-ignore
 /CONTRIBUTING.md export-ignore
 /phpcs.xml.dist export-ignore
 /phpstan.neon.dist export-ignore
 /phpunit.xml.dist export-ignore
 /README.md export-ignore
-/CHANGELOG.md export-ignore
-/images export-ignore
+/readme.md export-ignore
 /tests export-ignore
+/vendor export-ignore

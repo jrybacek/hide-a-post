@@ -1,7 +1,7 @@
 === Hide A Post ===
 Contributors: jrybacek
 Donate link: https://www.paypal.me/jrybacek
-Tags: hide, posts, category, tabletop gaming, pathfinder
+Tags: hide, posts, category, tabletop-gaming, pathfinder
 Requires at least: 7.0
 Tested up to: 7.1
 Requires PHP: 7.4
@@ -80,8 +80,14 @@ Yes. Use the `hap_user_can_view_hidden_posts` filter to grant or deny access per
 * Fixed fatal `TypeError` crash when listing posts via WP-CLI.
 * Replaced comma-separated category text input with hierarchical category checkboxes on the settings screen.
 * Replaced hardcoded `wp_` table prefixes and raw SQL interpolation with dynamic `$wpdb` table names, qualified columns, and parameterized `NOT EXISTS` queries via `$wpdb->prepare()`.
-* Blocked direct access to hidden posts by ID: capabilities (`map_meta_cap`, including `WP_Post` arguments), REST API reads of posts and their sub-resources (404 before the endpoint runs), revisions, deletion of hidden categories by non-Administrators, oEmbed, old-slug redirects, and canonical/404 slug-guess redirects.
+* Blocked direct access to hidden posts by ID: capabilities (`map_meta_cap`, including `WP_Post` arguments), REST API reads of posts and their sub-resources (404 before the endpoint runs), revisions, oEmbed, old-slug redirects, and canonical/404 slug-guess redirects.
 * Hid comments on hidden posts from comment queries, the REST API, the comments feed, and Recent Comments, and closed new comments on them.
+* Filtered classic menus and Navigation blocks, including nested submenus and REST `menu-items` and `wp_navigation` responses, so links to hidden posts are not shown to non-Administrators (stored menus are not changed).
+* Redacted hidden post titles read by ID (such as Media Library parent labels) to "(Private post)" for non-Administrators.
+* Blocked the per-post comments admin screen (`edit-comments.php?p=`) for hidden posts.
+* Scoped Empty Trash to the posts the current user can see.
+* Blocked non-Administrators from deleting hidden categories, including through bulk category deletion.
+* Linked attachments of hidden posts by `?attachment_id=` so the parent post's slug is not exposed.
 * Excluded hidden posts from previous/next post links, `wp_get_archives()`, and `get_posts()` calls that use `suppress_filters`.
 * Treated every user with the `manage_options` capability (plus Super Admins on Multisite) as an Administrator for the default-category rule.
 * Removed deleted categories from the saved settings automatically.
@@ -102,4 +108,4 @@ Yes. Use the `hap_user_can_view_hidden_posts` filter to grant or deny access per
 == Upgrade Notice ==
 
 = 2.0.0 =
-Requires WordPress 7.0+ and PHP 7.4+ (PHP 8.5 and WordPress 7.1 recommended). Fixes the WP-CLI crash, hardens SQL and direct post access, and updates the settings screen to use category checkboxes. Behavior change: Administrator-authored posts are now hidden in your site's *default category* (Settings → Writing), not only in "Uncategorized"; check that setting before upgrading. Upgrade in place (replace the plugin files); version 1.x deletes its settings when deactivated, so deactivating 1.x first means re-selecting your categories.
+Requires WordPress 7.0+ and PHP 7.4+. Administrator posts in your default category (Settings → Writing), not just "Uncategorized", are now hidden. Upgrade in place; do not deactivate 1.x first, as 1.x deletes its settings on deactivation. Also hardens menus, REST, and wp-admin.

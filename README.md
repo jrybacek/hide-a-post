@@ -98,15 +98,15 @@ With **Awesome** and **Spicy** checked:
 
 1. **Posts as an Administrator**
 
-   ![Example Posts as an Administrator](images/screenshot-1.png)
+   ![Example Posts as an Administrator](assets/screenshot-1.png)
 
 2. **Posts as an Editor**
 
-   ![Example Posts as an Editor](images/screenshot-2.png)
+   ![Example Posts as an Editor](assets/screenshot-2.png)
 
 3. **Hide A Post Settings Page**
 
-   ![Hide A Post settings](images/screenshot-3.png)
+   ![Hide A Post settings](assets/screenshot-3.png)
 
 ## Maintainers
 

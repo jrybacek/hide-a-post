@@ -56,6 +56,27 @@ jobs:
       - name: Run PHPStan static analysis
         run: composer phpstan
 
+  plugin-check:
+    name: WordPress Plugin Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      # Check the package WordPress.org receives (.gitattributes export-ignore
+      # applied), so tests, tooling, and assets do not raise false positives.
+      - name: Export release package
+        run: |
+          mkdir -p "$RUNNER_TEMP/hide-a-post"
+          git archive --format=tar HEAD | tar -x -C "$RUNNER_TEMP/hide-a-post"
+          find "$RUNNER_TEMP/hide-a-post" -type f | sort
+
+      - name: Run Plugin Check
+        uses: WordPress/plugin-check-action@v1.1.9
+        with:
+          # The action takes the plugin slug from this directory's name.
+          build-dir: ${{ runner.temp }}/hide-a-post
+
   tests:
     name: Tests (PHP ${{ matrix.php }}, WP ${{ matrix.wp }}${{ matrix.multisite == '1' && ', multisite' || '' }})
     runs-on: ubuntu-latest

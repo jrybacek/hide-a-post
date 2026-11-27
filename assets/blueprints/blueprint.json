@@ -1,0 +1,37 @@
+{
+	"$schema": "https://playground.wordpress.net/blueprint-schema.json",
+	"meta": {
+		"title": "Hide A Post demo",
+		"description": "Hide A Post with the readme's example posts, an Editor account (editor / editor), and the Awesome and Spicy categories hidden.",
+		"author": "jrybacek",
+		"categories": [
+			"Content"
+		]
+	},
+	"landingPage": "/wp-admin/options-general.php?page=hap",
+	"preferredVersions": {
+		"php": "8.3",
+		"wp": "latest"
+	},
+	"steps": [
+		{
+			"step": "login",
+			"username": "admin",
+			"password": "password"
+		},
+		{
+			"step": "installPlugin",
+			"pluginData": {
+				"resource": "wordpress.org/plugins",
+				"slug": "hide-a-post"
+			},
+			"options": {
+				"activate": true
+			}
+		},
+		{
+			"step": "runPHP",
+			"code": "<?php\nrequire_once '/wordpress/wp-load.php';\n\n$admin = get_user_by( 'login', 'admin' );\nwp_set_current_user( $admin->ID );\n\n// Start from an empty post list (removes \"Hello world!\").\n$existing = get_posts( array( 'post_type' => 'post', 'post_status' => 'any', 'numberposts' => -1, 'fields' => 'ids' ) );\nforeach ( $existing as $post_id ) {\n\twp_delete_post( $post_id, true );\n}\n\n$cats = array();\nforeach ( array( 'Fruit', 'Vegetable', 'Red', 'Green', 'White', 'Blue', 'Awesome', 'Spicy' ) as $name ) {\n\t$term = term_exists( $name, 'category' );\n\tif ( ! $term ) {\n\t\t$term = wp_insert_term( $name, 'category' );\n\t}\n\t$cats[ $name ] = (int) $term['term_id'];\n}\n$cats['Uncategorized'] = (int) get_option( 'default_category' );\n\n$editor_id = username_exists( 'editor' );\nif ( ! $editor_id ) {\n\t$editor_id = wp_insert_user(\n\t\tarray(\n\t\t\t'user_login'   => 'editor',\n\t\t\t'user_pass'    => 'editor',\n\t\t\t'user_email'   => 'editor@example.com',\n\t\t\t'display_name' => 'Editor',\n\t\t\t'role'         => 'editor',\n\t\t)\n\t);\n}\n\n$posts = array(\n\tarray( 'Tomato', $admin->ID, array( 'Fruit', 'Red' ) ),\n\tarray( 'Potato', $admin->ID, array( 'Vegetable', 'White' ) ),\n\tarray( 'Broccoli', $admin->ID, array( 'Vegetable', 'Green' ) ),\n\tarray( 'Mushrooms', $admin->ID, array( 'Vegetable', 'White', 'Awesome' ) ),\n\tarray( 'Apple', $admin->ID, array( 'Fruit', 'Red' ) ),\n\tarray( 'Pear', $admin->ID, array( 'Fruit', 'Green', 'Awesome' ) ),\n\tarray( 'Peppers', $admin->ID, array( 'Vegetable', 'Green', 'Spicy' ) ),\n\tarray( 'Peach', $admin->ID, array( 'Uncategorized' ) ),\n\tarray( 'Blueberries', $admin->ID, array( 'Fruit', 'Blue', 'Uncategorized' ) ),\n\tarray( 'Raspberries', $editor_id, array( 'Fruit', 'Red', 'Awesome' ) ),\n);\n\n// Newest first, so the Posts screen lists them in the readme's order.\n$now = time();\nforeach ( $posts as $i => $post ) {\n\twp_insert_post(\n\t\tarray(\n\t\t\t'post_title'    => $post[0],\n\t\t\t'post_content'  => '<!-- wp:paragraph --><p>' . $post[0] . ' is in: ' . implode( ', ', $post[2] ) . '.</p><!-- /wp:paragraph -->',\n\t\t\t'post_status'   => 'publish',\n\t\t\t'post_author'   => $post[1],\n\t\t\t'post_date_gmt' => gmdate( 'Y-m-d H:i:s', $now - ( $i + 1 ) * HOUR_IN_SECONDS ),\n\t\t\t'post_category' => array_map(\n\t\t\t\tfunction ( $name ) use ( $cats ) {\n\t\t\t\t\treturn $cats[ $name ];\n\t\t\t\t},\n\t\t\t\t$post[2]\n\t\t\t),\n\t\t)\n\t);\n}\n\nupdate_option( 'hap', array( 'categories' => array( $cats['Awesome'], $cats['Spicy'] ) ) );\n"
+		}
+	]
+}
