@@ -43,10 +43,29 @@ This plugin was created for a tabletop gaming group using WordPress to collabora
 
 Once configured:
 
-- Posts assigned to any checked hidden category are hidden from non-Administrators (including direct post-ID access in wp-admin and the REST API).
-- Posts authored by an Administrator that are assigned to the site's default category (typically `Uncategorized`) are hidden from non-Administrators until recategorized.
-- Administrators (`manage_options` capability) continue to see all posts.
+- Posts assigned to any checked hidden category are hidden from non-Administrators: post lists, search, feeds, sitemaps, archives, previous/next links, the REST API, oEmbed, and direct post-ID access in wp-admin. Comments on those posts are hidden too.
+- Posts authored by an Administrator that are assigned to the site's default category (**Settings → Writing**, typically `Uncategorized`) are hidden from non-Administrators until recategorized.
+- Administrators (`manage_options` capability, plus Super Admins on Multisite) continue to see all posts.
 - Unauthenticated WP-CLI commands (such as `wp post list`) bypass filtering automatically so CLI administration works cleanly.
+
+### Limitations
+
+- Post counts are not adjusted: category counts and the "All (N)" totals in wp-admin still include hidden posts.
+- Selecting a parent category does not hide posts that are only in its child categories.
+- Only the `post` post type is filtered; pages and custom post types are never hidden.
+
+### Filters
+
+| Filter | Purpose |
+| :--- | :--- |
+| `hap_user_can_view_hidden_posts` | Whether a user bypasses all filtering (default: has `manage_options`, or unauthenticated WP-CLI). |
+| `hap_should_filter_query` | Whether a specific `WP_Query` is filtered. |
+| `hap_hide_admin_default_category_posts` | Turn the Administrator default-category rule off. |
+| `hap_administrator_ids` | User IDs whose default-category posts are hidden. |
+
+### Upgrading from 1.x
+
+Upgrade in place by replacing the plugin files. Version 1.x deletes its settings when deactivated, so deactivating it first means re-selecting your categories. Saved category names and IDs from 1.x are migrated automatically. Administrator posts are now hidden in whatever category is set as the default, not only in `Uncategorized`.
 
 ### Example
 
@@ -98,6 +117,7 @@ Issues and pull requests are welcome!
 
 - **Commits:** This project uses combined [Gitmoji](https://gitmoji.dev/) and [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) (`<gitmoji> <type>(<scope>): <description>`). See [CONTRIBUTING.md](CONTRIBUTING.md) for the full emoji mapping, examples, and local git hook setup.
 - **Code Quality:** Run `composer phpcs` (WordPress Coding Standards + PHPCompatibilityWP for PHP 7.4–8.5) and `composer phpstan` before opening a pull request.
+- **Tests:** `composer test` runs the PHPUnit integration suite. It needs a MySQL database and a WordPress core checkout; set `WP_CORE_DIR`, `WP_DB_HOST`, `WP_DB_USER`, `WP_DB_PASSWORD`, and `WP_DB_NAME` (see [tests/wp-tests-config.php](tests/wp-tests-config.php)). Set `WP_MULTISITE=1` for Multisite.
 - **Changelog:** Release notes in [CHANGELOG.md](CHANGELOG.md) are generated with [git-cliff](https://git-cliff.org/) using [cliff.toml](cliff.toml).
 - **README:** If editing this README, please conform to the [standard-readme](https://github.com/richardlitt/standard-readme) specification.
 

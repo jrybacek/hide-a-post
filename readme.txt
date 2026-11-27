@@ -59,6 +59,14 @@ To avoid installing 15 different plugins just to hide posts by category from non
 
 Yes. Starting in 2.0.0, Hide A Post safely handles WP-CLI's scoped loader and bypasses post filtering for unauthenticated WP-CLI commands (such as `wp post list`). Passing `--user=<editor>` to WP-CLI applies non-Administrator filtering as expected.
 
+= What is hidden, and what is not? =
+
+Hidden posts are removed from post lists, search, feeds, sitemaps, archives, previous/next links, the REST API, oEmbed, and wp-admin, and their comments are hidden too. Post counts are not adjusted: category counts and the "All (N)" totals in wp-admin still include hidden posts. Selecting a parent category does not hide posts that are only in its child categories. Pages and custom post types are never hidden.
+
+= Can developers change who sees hidden posts? =
+
+Yes. Use the `hap_user_can_view_hidden_posts` filter to grant or deny access per user, `hap_hide_admin_default_category_posts` to turn off the default-category rule, and `hap_administrator_ids` to change whose default-category posts are hidden.
+
 == Screenshots ==
 
 1. Posts as an Administrator
@@ -72,7 +80,13 @@ Yes. Starting in 2.0.0, Hide A Post safely handles WP-CLI's scoped loader and by
 * Fixed fatal `TypeError` crash when listing posts via WP-CLI.
 * Replaced comma-separated category text input with hierarchical category checkboxes on the settings screen.
 * Replaced hardcoded `wp_` table prefixes and raw SQL interpolation with dynamic `$wpdb` table names, qualified columns, and parameterized `NOT EXISTS` queries via `$wpdb->prepare()`.
-* Blocked direct post-ID access in wp-admin (`map_meta_cap`) and single-post REST API reads (`rest_prepare_post`) for hidden posts.
+* Blocked direct access to hidden posts by ID: capabilities (`map_meta_cap`, including `WP_Post` arguments), REST API reads of posts and their sub-resources (404 before the endpoint runs), oEmbed, and canonical/404 slug-guess redirects.
+* Hid comments on hidden posts from comment queries, the REST API, the comments feed, and Recent Comments, and closed new comments on them.
+* Excluded hidden posts from previous/next post links, `wp_get_archives()`, and `get_posts()` calls that use `suppress_filters`.
+* Treated every user with the `manage_options` capability (plus Super Admins on Multisite) as an Administrator for the default-category rule.
+* Removed deleted categories from the saved settings automatically.
+* Added the `hap_user_can_view_hidden_posts`, `hap_should_filter_query`, `hap_hide_admin_default_category_posts`, and `hap_administrator_ids` filters.
+* Added PHPUnit integration tests (single site and Multisite) to CI.
 * Replaced deprecated `screen_icon()` and role-name capability checks with modern Settings API markup and `manage_options` capability checks.
 * Moved option cleanup from deactivation hook to `uninstall.php` so deactivating the plugin preserves saved settings.
 * Used WordPress's `default_category` option instead of hardcoding the English string "Uncategorized".
@@ -88,4 +102,4 @@ Yes. Starting in 2.0.0, Hide A Post safely handles WP-CLI's scoped loader and by
 == Upgrade Notice ==
 
 = 2.0.0 =
-Requires WordPress 7.0+ and PHP 7.4+ (PHP 8.5 and WordPress 7.1 recommended). Fixes the WP-CLI crash, hardens SQL and direct post access, and updates the settings screen to use category checkboxes. Existing saved category settings are preserved automatically.
+Requires WordPress 7.0+ and PHP 7.4+ (PHP 8.5 and WordPress 7.1 recommended). Fixes the WP-CLI crash, hardens SQL and direct post access, and updates the settings screen to use category checkboxes. Behavior change: Administrator-authored posts are now hidden in your site's *default category* (Settings → Writing), not only in "Uncategorized"; check that setting before upgrading. Upgrade in place (replace the plugin files); version 1.x deletes its settings when deactivated, so deactivating 1.x first means re-selecting your categories.
