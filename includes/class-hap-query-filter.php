@@ -501,7 +501,8 @@ final class HAP_Query_Filter {
 	public function filter_navigation_submenu_block( $block_content, $block, $instance = null ) {
 		$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : array();
 
-		if ( ! $this->is_hidden_navigation_target( $attrs ) ) {
+		// Core already suppressed it (e.g. unpublished target), so keep it suppressed.
+		if ( '' === trim( (string) $block_content ) || ! $this->should_redact_submenu( $attrs ) ) {
 			return $block_content;
 		}
 
@@ -593,7 +594,7 @@ final class HAP_Query_Filter {
 			}
 
 			$attrs = isset( $block->parsed_block['attrs'] ) && is_array( $block->parsed_block['attrs'] ) ? $block->parsed_block['attrs'] : array();
-			if ( 'core/navigation-submenu' === $block->name && $this->is_hidden_navigation_target( $attrs ) ) {
+			if ( 'core/navigation-submenu' === $block->name && $this->should_redact_submenu( $attrs ) ) {
 				$block->parsed_block['attrs'] = $this->redact_navigation_attrs( $attrs );
 				// WP_Block computes `attributes` lazily from parsed_block on next access.
 				unset( $block->attributes );
@@ -615,7 +616,7 @@ final class HAP_Query_Filter {
 	 */
 	private function redact_hidden_submenus( array $block ) {
 		$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : array();
-		if ( isset( $block['blockName'] ) && 'core/navigation-submenu' === $block['blockName'] && $this->is_hidden_navigation_target( $attrs ) ) {
+		if ( isset( $block['blockName'] ) && 'core/navigation-submenu' === $block['blockName'] && $this->should_redact_submenu( $attrs ) ) {
 			$block['attrs'] = $this->redact_navigation_attrs( $attrs );
 		}
 
@@ -739,6 +740,20 @@ final class HAP_Query_Filter {
 		$is_post_link = ( isset( $attrs['kind'] ) && 'post-type' === $attrs['kind'] ) || ( isset( $attrs['type'] ) && 'post' === $attrs['type'] );
 
 		return $is_post_link && $this->is_hidden_for_current_user( $this->to_id( $attrs['id'] ) );
+	}
+
+	/**
+	 * Checks whether a Navigation Submenu should be rendered redacted: it points
+	 * at a hidden post that is published. Core already suppresses submenus whose
+	 * post is not published, so those are left for core to drop.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param array<string, mixed> $attrs Block attributes.
+	 * @return bool
+	 */
+	private function should_redact_submenu( array $attrs ) {
+		return $this->is_hidden_navigation_target( $attrs ) && 'publish' === get_post_status( $this->to_id( $attrs['id'] ) );
 	}
 
 	/**

@@ -797,6 +797,7 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 
 		$this->assertSame( '', $by_object[ $this->posts['admin_secret'] ]['url'] );
 		$this->assertSame( '(Private post)', $by_object[ $this->posts['admin_secret'] ]['title']['rendered'] );
+		$this->assertArrayNotHasKey( 'raw', $by_object[ $this->posts['admin_secret'] ]['title'] );
 		$this->assertSame( get_permalink( $this->posts['admin_public'] ), $by_object[ $this->posts['admin_public'] ]['url'] );
 	}
 
@@ -908,6 +909,18 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 
 		wp_set_current_user( $this->admin_id );
 		$this->assertStringContainsString( 'SecretParent', do_blocks( $this->nested_navigation_markup() ) );
+
+		// Core drops submenus whose post is not published; redaction must not revive them.
+		wp_set_current_user( 0 );
+		wp_update_post(
+			array(
+				'ID'          => $this->posts['admin_secret'],
+				'post_status' => 'draft',
+			)
+		);
+		$html = do_blocks( $this->nested_navigation_markup() );
+		$this->assertStringNotContainsString( '(Private post)', $html );
+		$this->assertStringNotContainsString( 'PublicChild<', $html );
 	}
 
 	/**
