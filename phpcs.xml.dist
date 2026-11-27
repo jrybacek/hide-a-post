@@ -16,9 +16,7 @@
 	<config name="minimum_wp_version" value="7.0"/>
 	<config name="testVersion" value="7.4-8.5"/>
 
-	<rule ref="WordPress">
-		<exclude name="WordPress.DB.DirectDatabaseQuery"/>
-	</rule>
+	<rule ref="WordPress"/>
 
 	<rule ref="PHPCompatibilityWP"/>
 
@@ -36,5 +34,15 @@
 				<element value="hap_"/>
 			</property>
 		</properties>
+		<!-- The WordPress test suite config must define unprefixed core constants. -->
+		<exclude-pattern>/tests/*</exclude-pattern>
+	</rule>
+
+	<!-- Test files follow PHPUnit naming (test-*.php) and set WordPress globals. -->
+	<rule ref="WordPress.Files.FileName">
+		<exclude-pattern>/tests/*</exclude-pattern>
+	</rule>
+	<rule ref="WordPress.WP.GlobalVariablesOverride">
+		<exclude-pattern>/tests/*</exclude-pattern>
 	</rule>
 </ruleset>

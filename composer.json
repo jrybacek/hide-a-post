@@ -20,8 +20,11 @@
 		"phpcompatibility/phpcompatibility-wp": "^3.0@alpha",
 		"phpstan/extension-installer": "^1.4",
 		"phpstan/phpstan": "^2.0",
+		"phpunit/phpunit": "^9.6",
 		"szepeviktor/phpstan-wordpress": "^2.0",
-		"wp-coding-standards/wpcs": "^3.1"
+		"wp-coding-standards/wpcs": "^3.1",
+		"wp-phpunit/wp-phpunit": "^7.0",
+		"yoast/phpunit-polyfills": "^1.1 || ^2.0 || ^3.0 || ^4.0"
 	},
 	"config": {
 		"allow-plugins": {
@@ -33,6 +36,7 @@
 	"scripts": {
 		"phpcs": "phpcs",
 		"phpcbf": "phpcbf",
-		"phpstan": "phpstan analyse --memory-limit=1G"
+		"phpstan": "phpstan analyse --memory-limit=1G",
+		"test": "phpunit"
 	}
 }
