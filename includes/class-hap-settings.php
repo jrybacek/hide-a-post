@@ -158,6 +158,7 @@ final class HAP_Settings {
 
 		$ordered_categories = $this->order_categories_hierarchically( $categories );
 		$default_cat_id     = absint( get_option( 'default_category', 0 ) );
+		$existing_ids       = array();
 
 		echo '<fieldset>';
 		echo '<legend class="screen-reader-text"><span>' . esc_html__( 'Categories to hide from non-Administrators', 'hide-a-post' ) . '</span></legend>';
@@ -168,23 +169,31 @@ final class HAP_Settings {
 			 *
 			 * @var WP_Term $category
 			 */
-			$category   = $item['term'];
-			$depth      = (int) $item['depth'];
-			$full_path  = (string) $item['path'];
-			$term_id    = (int) $category->term_id;
-			$checked    = in_array( $term_id, $selected_ids, true );
-			$indent     = $depth > 0 ? str_repeat( '&mdash; ', $depth ) : '';
-			$input_id   = 'hap-category-' . $term_id;
-			$aria_label = $depth > 0 ? $full_path : '';
+			$category       = $item['term'];
+			$depth          = (int) $item['depth'];
+			$ancestor_path  = (string) $item['ancestors'];
+			$term_id        = (int) $category->term_id;
+			$checked        = in_array( $term_id, $selected_ids, true );
+			$input_id       = 'hap-category-' . $term_id;
+			$existing_ids[] = $term_id;
 
 			echo '<label for="' . esc_attr( $input_id ) . '" style="display:block;margin-bottom:6px;">';
-			echo '<input type="checkbox" id="' . esc_attr( $input_id ) . '" name="' . esc_attr( HAP_OPTION_NAME ) . '[categories][]" value="' . esc_attr( (string) $term_id ) . '"';
-			if ( '' !== $aria_label ) {
-				echo ' aria-label="' . esc_attr( $aria_label ) . '"';
+			echo '<input type="checkbox" id="' . esc_attr( $input_id ) . '" name="' . esc_attr( HAP_OPTION_NAME ) . '[categories][]" value="' . esc_attr( (string) $term_id ) . '" ' . checked( $checked, true, false ) . ' /> ';
+
+			if ( $depth > 0 ) {
+				// Visual indent for sighted users; full ancestor path for screen readers.
+				echo '<span aria-hidden="true">' . esc_html( str_repeat( "\u{2014} ", $depth ) ) . '</span>';
+				echo '<span class="screen-reader-text">' . esc_html( $ancestor_path . ' > ' ) . '</span>';
 			}
-			echo ' ' . checked( $checked, true, false ) . ' /> ';
-			echo wp_kses( $indent, array() ) . esc_html( $category->name );
-			echo ' <span class="description">(' . esc_html( (string) $category->count ) . ')</span>';
+
+			echo esc_html( $category->name );
+			echo ' <span class="description">(' . esc_html(
+				sprintf(
+					/* translators: %s: Number of posts in the category. */
+					_n( '%s post', '%s posts', (int) $category->count, 'hide-a-post' ),
+					number_format_i18n( (int) $category->count )
+				)
+			) . ')</span>';
 
 			if ( $term_id === $default_cat_id ) {
 				echo ' <span class="description">&ndash; ' . esc_html__( 'default category', 'hide-a-post' ) . '</span>';
@@ -194,7 +203,37 @@ final class HAP_Settings {
 		}
 
 		echo '</fieldset>';
-		echo '<p class="description">' . esc_html__( 'When at least one category is selected, posts authored by Administrators in the default category are also automatically hidden from non-Administrators.', 'hide-a-post' ) . '</p>';
+
+		$orphaned_ids = array_diff( $selected_ids, $existing_ids );
+		if ( ! empty( $orphaned_ids ) ) {
+			echo '<p class="description"><strong>' . esc_html(
+				sprintf(
+					/* translators: %d: Number of saved categories that no longer exist. */
+					_n(
+						'%d previously selected category no longer exists and will be removed when you save.',
+						'%d previously selected categories no longer exist and will be removed when you save.',
+						count( $orphaned_ids ),
+						'hide-a-post'
+					),
+					count( $orphaned_ids )
+				)
+			) . '</strong></p>';
+		}
+
+		echo '<p class="description">' . esc_html__( 'Selecting a parent category does not hide posts that are only assigned to its child categories; select each category you want hidden.', 'hide-a-post' ) . '</p>';
+
+		$default_category = $default_cat_id > 0 ? get_term( $default_cat_id, 'category' ) : null;
+		if ( $default_category instanceof WP_Term ) {
+			echo '<p class="description">' . esc_html(
+				sprintf(
+					/* translators: %s: Default category name. */
+					__( 'When at least one category is selected, posts written by Administrators that are in the default category (%s) are also hidden from non-Administrators.', 'hide-a-post' ),
+					$default_category->name
+				)
+			) . '</p>';
+		}
+
+		echo '<p class="description">' . esc_html__( 'Non-Administrators who assign a hidden category to a post immediately lose access to that post.', 'hide-a-post' ) . '</p>';
 	}
 
 	/**
@@ -213,38 +252,15 @@ final class HAP_Settings {
 			return array( 'categories' => array() );
 		}
 
-		$raw_categories = $input['categories'];
-		$valid_ids      = array();
-		$invalid_items  = array();
+		$invalid_items = array();
+		$valid_ids     = HAP_Plugin::resolve_category_ids( $input['categories'], $invalid_items );
 
-		if ( is_string( $raw_categories ) ) {
-			$parts = array_filter(
-				array_map( 'trim', explode( ',', sanitize_text_field( $raw_categories ) ) ),
-				static function ( $part ) {
-					return '' !== $part;
-				}
-			);
-
-			foreach ( $parts as $category_name ) {
-				$term = get_term_by( 'name', $category_name, 'category' );
-				if ( $term instanceof WP_Term ) {
-					$valid_ids[] = (int) $term->term_id;
-				} else {
-					$invalid_items[] = $category_name;
-				}
-			}
-		} elseif ( is_array( $raw_categories ) ) {
-			foreach ( $raw_categories as $raw_value ) {
-				$term_id = HAP_Plugin::parse_positive_int( $raw_value );
-				if ( $term_id > 0 && null !== term_exists( $term_id, 'category' ) ) {
-					$valid_ids[] = $term_id;
-				} else {
-					$invalid_items[] = is_scalar( $raw_value ) ? sanitize_text_field( (string) $raw_value ) : '';
-				}
-			}
+		if ( ! is_string( $input['categories'] ) && ! is_array( $input['categories'] ) ) {
+			$invalid_items[] = is_scalar( $input['categories'] ) ? (string) $input['categories'] : '';
 		}
 
-		if ( ! empty( $invalid_items ) ) {
+		// add_settings_error() is only loaded in wp-admin; programmatic updates elsewhere skip the notice.
+		if ( ! empty( $invalid_items ) && function_exists( 'add_settings_error' ) ) {
 			add_settings_error(
 				HAP_OPTION_NAME,
 				'hap_invalid_categories',
@@ -254,7 +270,7 @@ final class HAP_Settings {
 		}
 
 		return array(
-			'categories' => array_values( array_unique( $valid_ids ) ),
+			'categories' => $valid_ids,
 		);
 	}
 
@@ -264,7 +280,7 @@ final class HAP_Settings {
 	 * @since 2.0.0
 	 *
 	 * @param WP_Term[] $categories Flat list of category terms.
-	 * @return array<int, array{term: WP_Term, depth: int, path: string}>
+	 * @return array<int, array{term: WP_Term, depth: int, ancestors: string}>
 	 */
 	private function order_categories_hierarchically( array $categories ) {
 		$by_parent = array();
@@ -291,9 +307,9 @@ final class HAP_Settings {
 		foreach ( $by_id as $term_id => $category ) {
 			if ( ! isset( $visited[ $term_id ] ) ) {
 				$ordered[] = array(
-					'term'  => $category,
-					'depth' => 0,
-					'path'  => $category->name,
+					'term'      => $category,
+					'depth'     => 0,
+					'ancestors' => '',
 				);
 			}
 		}
@@ -306,12 +322,12 @@ final class HAP_Settings {
 	 *
 	 * @since 2.0.0
 	 *
-	 * @param int                                                        $parent_id   Parent term ID.
-	 * @param int                                                        $depth       Current nesting depth.
-	 * @param string                                                     $parent_path Ancestor path label.
-	 * @param array<int, WP_Term[]>                                      $by_parent   Terms grouped by parent ID.
-	 * @param array<int, array{term: WP_Term, depth: int, path: string}> $ordered     Output list passed by reference.
-	 * @param array<int, bool>                                           $visited     Visited term IDs map passed by reference.
+	 * @param int                                                             $parent_id   Parent term ID.
+	 * @param int                                                             $depth       Current nesting depth.
+	 * @param string                                                          $parent_path Ancestor path label.
+	 * @param array<int, WP_Term[]>                                           $by_parent   Terms grouped by parent ID.
+	 * @param array<int, array{term: WP_Term, depth: int, ancestors: string}> $ordered     Output list passed by reference.
+	 * @param array<int, bool>                                                $visited     Visited term IDs map passed by reference.
 	 * @return void
 	 */
 	private function collect_children( $parent_id, $depth, $parent_path, array $by_parent, array &$ordered, array &$visited ) {
@@ -329,9 +345,9 @@ final class HAP_Settings {
 
 			$visited[ $term_id ] = true;
 			$ordered[]           = array(
-				'term'  => $category,
-				'depth' => $depth,
-				'path'  => $path,
+				'term'      => $category,
+				'depth'     => $depth,
+				'ancestors' => $parent_path,
 			);
 
 			$this->collect_children( $term_id, $depth + 1, $path, $by_parent, $ordered, $visited );

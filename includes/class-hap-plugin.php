@@ -10,11 +10,27 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Coordinates plugin lifecycle, option retrieval, and admin UI hooks.
+ * Coordinates plugin lifecycle, option storage and upgrades, and admin UI hooks.
  *
  * @since 2.0.0
  */
 final class HAP_Plugin {
+
+	/**
+	 * Option that stores the schema version of the saved settings.
+	 *
+	 * @since 2.0.0
+	 * @var string
+	 */
+	const DB_VERSION_OPTION = 'hap_db_version';
+
+	/**
+	 * Current settings schema version.
+	 *
+	 * @since 2.0.0
+	 * @var string
+	 */
+	const DB_VERSION = '2.0.0';
 
 	/**
 	 * Singleton instance.
@@ -84,12 +100,17 @@ final class HAP_Plugin {
 
 		$this->initialized = true;
 
+		// Runs on every site load (not only activation) so in-place updates and
+		// network-activated sites are migrated before any query is filtered.
+		self::maybe_upgrade();
+
 		$this->settings     = new HAP_Settings();
 		$this->query_filter = new HAP_Query_Filter();
 
 		$this->settings->init();
 		$this->query_filter->init();
 
+		add_action( 'delete_category', array( __CLASS__, 'prune_deleted_category' ) );
 		add_filter( 'plugin_action_links_' . HAP_BASENAME, array( $this, 'add_action_links' ) );
 
 		if ( is_admin() ) {
@@ -100,24 +121,109 @@ final class HAP_Plugin {
 	/**
 	 * Handles plugin activation.
 	 *
-	 * Initializes the default option structure if missing and repairs legacy
-	 * options where `categories` may have been stored as `null`.
+	 * Network-activated sites are initialized lazily by {@see HAP_Plugin::maybe_upgrade()}
+	 * on their first load, so no per-site loop is needed here.
 	 *
 	 * @since 2.0.0
 	 *
 	 * @return void
 	 */
 	public static function activate() {
+		self::maybe_upgrade();
+	}
+
+	/**
+	 * Creates or migrates the stored option to the current schema once per site.
+	 *
+	 * Handles v1.0/v1.1 payloads: ID arrays, comma-separated category names,
+	 * `null` (v1.1 validation failure), and IDs of categories deleted since.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @return void
+	 */
+	public static function maybe_upgrade() {
+		if ( self::DB_VERSION === get_option( self::DB_VERSION_OPTION ) ) {
+			return;
+		}
+
 		$existing = get_option( HAP_OPTION_NAME, false );
 
 		if ( false === $existing ) {
 			add_option( HAP_OPTION_NAME, array( 'categories' => array() ) );
+		} else {
+			$raw_categories = is_array( $existing ) && isset( $existing['categories'] ) ? $existing['categories'] : array();
+
+			update_option( HAP_OPTION_NAME, array( 'categories' => self::resolve_category_ids( $raw_categories ) ) );
+		}
+
+		update_option( self::DB_VERSION_OPTION, self::DB_VERSION );
+	}
+
+	/**
+	 * Resolves legacy or submitted category values into existing category term IDs.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param mixed    $raw_categories Array of IDs, or a comma-separated string of category names.
+	 * @param string[] $invalid_items  Receives the values that could not be resolved.
+	 * @param-out string[] $invalid_items
+	 * @return int[]
+	 */
+	public static function resolve_category_ids( $raw_categories, &$invalid_items = array() ) {
+		$valid_ids     = array();
+		$invalid_items = array();
+
+		if ( is_string( $raw_categories ) ) {
+			$names = array_filter(
+				array_map( 'trim', explode( ',', sanitize_text_field( $raw_categories ) ) ),
+				static function ( $name ) {
+					return '' !== $name;
+				}
+			);
+
+			foreach ( $names as $name ) {
+				$term = get_term_by( 'name', $name, 'category' );
+				if ( $term instanceof WP_Term ) {
+					$valid_ids[] = (int) $term->term_id;
+				} else {
+					$invalid_items[] = $name;
+				}
+			}
+		} elseif ( is_array( $raw_categories ) ) {
+			foreach ( $raw_categories as $raw_value ) {
+				$term_id = self::parse_positive_int( $raw_value );
+				if ( $term_id > 0 && null !== term_exists( $term_id, 'category' ) ) {
+					$valid_ids[] = $term_id;
+				} else {
+					$invalid_items[] = is_scalar( $raw_value ) ? sanitize_text_field( (string) $raw_value ) : '';
+				}
+			}
+		}
+
+		return array_values( array_unique( $valid_ids ) );
+	}
+
+	/**
+	 * Removes a deleted category from the hidden category list.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param int $term_id Deleted category term ID.
+	 * @return void
+	 */
+	public static function prune_deleted_category( $term_id ) {
+		$term_id = (int) $term_id;
+		$current = self::get_hidden_category_ids();
+
+		if ( ! in_array( $term_id, $current, true ) ) {
 			return;
 		}
 
-		if ( ! is_array( $existing ) || ! isset( $existing['categories'] ) || ! is_array( $existing['categories'] ) ) {
-			update_option( HAP_OPTION_NAME, array( 'categories' => self::normalize_category_ids( $existing ) ) );
-		}
+		update_option(
+			HAP_OPTION_NAME,
+			array( 'categories' => array_values( array_diff( $current, array( $term_id ) ) ) )
+		);
 	}
 
 	/**
@@ -131,9 +237,7 @@ final class HAP_Plugin {
 	 * @return int[]
 	 */
 	public static function get_hidden_category_ids() {
-		$options = get_option( HAP_OPTION_NAME, array() );
-
-		return self::normalize_category_ids( $options );
+		return self::normalize_category_ids( get_option( HAP_OPTION_NAME, array() ) );
 	}
 
 	/**
@@ -151,7 +255,7 @@ final class HAP_Plugin {
 
 		if ( is_string( $value ) ) {
 			$trimmed = trim( $value );
-			if ( '' !== $trimmed && ctype_digit( $trimmed ) ) {
+			if ( 1 === preg_match( '/^[0-9]{1,18}$/', $trimmed ) ) {
 				$parsed = (int) $trimmed;
 				return $parsed > 0 ? $parsed : 0;
 			}
