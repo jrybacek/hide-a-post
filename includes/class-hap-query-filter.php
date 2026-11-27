@@ -585,9 +585,17 @@ final class HAP_Query_Filter {
 		$original                = $args['render_callback'];
 		$args['render_callback'] = function ( $attributes, $content = '', $block = null ) use ( $original ) {
 			// Core copies the legacy `navigationMenuId` into `ref` inside the callback.
-			// to_id() matches get_post(), which rejects non-numeric values (arrays included).
+			// Resolve the value exactly as core will (get_post() casts differently
+			// across versions: WP 7.0 turns a non-empty array into ID 1). Empty
+			// values are skipped so get_post() cannot fall back to the global post.
 			foreach ( array( 'ref', 'navigationMenuId' ) as $key ) {
-				if ( is_array( $attributes ) && isset( $attributes[ $key ] ) && $this->is_hidden_for_current_user( $this->to_id( $attributes[ $key ] ) ) ) {
+				if ( ! is_array( $attributes ) || empty( $attributes[ $key ] ) ) {
+					continue;
+				}
+
+				$value = $attributes[ $key ];
+				$post  = is_scalar( $value ) || is_array( $value ) ? get_post( $value ) : null;
+				if ( $post instanceof WP_Post && $this->is_hidden_for_current_user( (int) $post->ID ) ) {
 					return '';
 				}
 			}

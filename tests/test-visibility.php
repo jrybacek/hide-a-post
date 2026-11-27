@@ -891,6 +891,19 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 		$this->assertCount( 2, $blocks );
 		$this->assertCount( 1, $blocks[0]['innerBlocks'] );
 		$this->assertCount( 1, $blocks[1]['innerBlocks'] );
+
+		// An unpublished hidden target drops the whole submenu from content.raw.
+		wp_update_post(
+			array(
+				'ID'          => $this->posts['admin_secret'],
+				'post_status' => 'draft',
+			)
+		);
+		$raw    = (string) rest_do_request( $request )->get_data()['content']['raw'];
+		$blocks = parse_blocks( $raw );
+		$this->assertStringNotContainsString( '(Private post)', $raw );
+		$this->assertStringNotContainsString( 'PublicChild"', $raw );
+		$this->assertCount( 1, $blocks );
 	}
 
 	/**
@@ -983,6 +996,30 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 			$markup = '<!-- wp:navigation {"' . $attribute . '":' . $this->posts['admin_secret'] . '} /-->';
 			$this->assertStringNotContainsString( 'SecretBody', do_blocks( $markup ), $attribute );
 		}
+
+		// Whatever post core resolves an odd value to (WP 7.0 casts a non-empty
+		// array to ID 1), the plugin checks that same post.
+		$value    = array( 987654 );
+		$resolved = get_post( $value );
+		if ( $resolved instanceof WP_Post ) {
+			wp_update_post(
+				array(
+					'ID'            => $resolved->ID,
+					'post_status'   => 'publish',
+					'post_content'  => '<!-- wp:paragraph --><p>ResolvedSecretBody</p><!-- /wp:paragraph -->',
+					'post_category' => array( $this->secret_cat ),
+				)
+			);
+		} else {
+			self::factory()->post->create(
+				array(
+					'import_id'     => 1,
+					'post_content'  => '<!-- wp:paragraph --><p>ResolvedSecretBody</p><!-- /wp:paragraph -->',
+					'post_category' => array( $this->secret_cat ),
+				)
+			);
+		}
+		$this->assertStringNotContainsString( 'ResolvedSecretBody', do_blocks( '<!-- wp:navigation {"navigationMenuId":[987654]} /-->' ) );
 
 		wp_set_current_user( $this->editor_id );
 		$request = new WP_REST_Request( 'POST', '/wp/v2/block-renderer/core/navigation' );
