@@ -956,10 +956,13 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 			$this->assertStringContainsString( 'PublicChild', $html, $label );
 		}
 
-		$label_less = str_replace( '"label":"SecretParent",', '"label":"",', $submenu );
-		$html       = do_blocks( $label_less );
-		$this->assertStringNotContainsString( '(Private post)', $html );
-		$this->assertStringNotContainsString( 'PublicChild', $html );
+		// Labels core treats as empty stay suppressed.
+		foreach ( array( '""', '"0"' ) as $empty_label ) {
+			$label_less = str_replace( '"label":"SecretParent",', '"label":' . $empty_label . ',', $submenu );
+			$html       = do_blocks( $label_less );
+			$this->assertStringNotContainsString( '(Private post)', $html, $empty_label );
+			$this->assertStringNotContainsString( 'PublicChild', $html, $empty_label );
+		}
 	}
 
 	/**

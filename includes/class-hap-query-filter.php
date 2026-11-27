@@ -585,6 +585,7 @@ final class HAP_Query_Filter {
 		$original                = $args['render_callback'];
 		$args['render_callback'] = function ( $attributes, $content = '', $block = null ) use ( $original ) {
 			// Core copies the legacy `navigationMenuId` into `ref` inside the callback.
+			// to_id() matches get_post(), which rejects non-numeric values (arrays included).
 			foreach ( array( 'ref', 'navigationMenuId' ) as $key ) {
 				if ( is_array( $attributes ) && isset( $attributes[ $key ] ) && $this->is_hidden_for_current_user( $this->to_id( $attributes[ $key ] ) ) ) {
 					return '';
@@ -685,7 +686,9 @@ final class HAP_Query_Filter {
 		$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : array();
 
 		if ( in_array( $name, array( 'core/navigation-link', 'core/navigation-submenu' ), true ) && $this->is_hidden_navigation_target( $attrs ) ) {
-			if ( 'core/navigation-link' === $name ) {
+			// Links, and submenus whose hidden post is unpublished, are dropped
+			// (matching rendered output); published hidden submenus are redacted.
+			if ( 'core/navigation-link' === $name || ! $this->should_redact_submenu( $attrs ) ) {
 				return null;
 			}
 
@@ -735,7 +738,8 @@ final class HAP_Query_Filter {
 	 * @return array<string, mixed>
 	 */
 	private function redact_navigation_attrs( array $attrs ) {
-		$has_label = isset( $attrs['label'] ) && '' !== trim( (string) $attrs['label'] );
+		// Same test core applies to the prepared (string) label.
+		$has_label = isset( $attrs['label'] ) && is_string( $attrs['label'] ) && ! empty( $attrs['label'] );
 
 		unset( $attrs['id'], $attrs['url'], $attrs['kind'], $attrs['type'], $attrs['title'], $attrs['description'] );
 
