@@ -101,6 +101,7 @@ final class HAP_Query_Filter {
 		add_filter( 'rest_prepare_wp_navigation', array( $this, 'filter_rest_navigation' ) );
 		add_filter( 'wp_navigation_should_create_fallback', array( $this, 'filter_navigation_fallback_creation' ) );
 		add_filter( 'render_block_core/navigation-link', array( $this, 'filter_navigation_link_block' ), 10, 2 );
+		add_filter( 'render_block_core/navigation-submenu', array( $this, 'filter_navigation_submenu_block' ), 10, 3 );
 		add_action( 'load-edit-comments.php', array( $this, 'guard_post_comments_screen' ) );
 		add_action( 'load-edit.php', array( $this, 'limit_empty_trash_to_visible_posts' ) );
 		add_filter( 'oembed_request_post_id', array( $this, 'filter_requested_post_id' ) );
@@ -411,10 +412,13 @@ final class HAP_Query_Filter {
 			$data['url']         = '';
 			$data['attr_title']  = '';
 			$data['description'] = '';
-			$data['title']       = array(
-				'raw'      => __( '(Private post)', 'hide-a-post' ),
-				'rendered' => __( '(Private post)', 'hide-a-post' ),
-			);
+
+			// Replace only the title fields the response context already includes.
+			foreach ( array( 'raw', 'rendered' ) as $key ) {
+				if ( isset( $data['title'][ $key ] ) ) {
+					$data['title'][ $key ] = __( '(Private post)', 'hide-a-post' );
+				}
+			}
 			$response->set_data( $data );
 		}
 
@@ -478,6 +482,38 @@ final class HAP_Query_Filter {
 	}
 
 	/**
+	 * Re-renders Navigation Submenu blocks that point at hidden posts without the
+	 * post's label, URL, or description, keeping their visible child items.
+	 *
+	 * Uses the render filter because the Navigation block renders inner blocks
+	 * through WP_Block::render(), which skips `render_block_data`.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param string               $block_content Rendered block.
+	 * @param array<string, mixed> $block         Parsed block.
+	 * @param mixed                $instance      Block instance.
+	 * @return string
+	 */
+	public function filter_navigation_submenu_block( $block_content, $block, $instance = null ) {
+		$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : array();
+
+		if ( ! $this->is_hidden_navigation_target( $attrs ) ) {
+			return $block_content;
+		}
+
+		if ( ! ( $instance instanceof WP_Block ) ) {
+			return '';
+		}
+
+		$parsed          = $instance->parsed_block;
+		$parsed['attrs'] = $this->redact_navigation_attrs( $attrs );
+		$redacted        = new WP_Block( $parsed, is_array( $instance->context ) ? $instance->context : array() );
+
+		return (string) $redacted->render();
+	}
+
+	/**
 	 * Removes Navigation Link blocks and redacts Navigation Submenu blocks that
 	 * point at hidden posts, recursively.
 	 *
@@ -490,27 +526,83 @@ final class HAP_Query_Filter {
 		$result = array();
 
 		foreach ( $blocks as $block ) {
-			$name  = isset( $block['blockName'] ) ? (string) $block['blockName'] : '';
-			$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : array();
-
-			if ( in_array( $name, array( 'core/navigation-link', 'core/navigation-submenu' ), true ) && $this->is_hidden_navigation_target( $attrs ) ) {
-				if ( 'core/navigation-link' === $name ) {
-					continue;
-				}
-
-				unset( $attrs['id'], $attrs['url'], $attrs['kind'], $attrs['type'], $attrs['title'] );
-				$attrs['label'] = __( '(Private post)', 'hide-a-post' );
-				$block['attrs'] = $attrs;
+			$kept = is_array( $block ) ? $this->strip_navigation_block( $block ) : $block;
+			if ( null !== $kept ) {
+				$result[] = $kept;
 			}
-
-			if ( ! empty( $block['innerBlocks'] ) && is_array( $block['innerBlocks'] ) ) {
-				$block['innerBlocks'] = $this->strip_hidden_navigation_links( $block['innerBlocks'] );
-			}
-
-			$result[] = $block;
 		}
 
 		return $result;
+	}
+
+	/**
+	 * Processes one parsed block for {@see HAP_Query_Filter::strip_hidden_navigation_links()},
+	 * keeping `innerContent` placeholders aligned with the remaining `innerBlocks`.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param array<string, mixed> $block Parsed block.
+	 * @return array<string, mixed>|null Processed block, or null to remove it.
+	 */
+	private function strip_navigation_block( array $block ) {
+		$name  = isset( $block['blockName'] ) ? (string) $block['blockName'] : '';
+		$attrs = isset( $block['attrs'] ) && is_array( $block['attrs'] ) ? $block['attrs'] : array();
+
+		if ( in_array( $name, array( 'core/navigation-link', 'core/navigation-submenu' ), true ) && $this->is_hidden_navigation_target( $attrs ) ) {
+			if ( 'core/navigation-link' === $name ) {
+				return null;
+			}
+
+			$block['attrs'] = $this->redact_navigation_attrs( $attrs );
+		}
+
+		if ( empty( $block['innerBlocks'] ) || ! is_array( $block['innerBlocks'] ) ) {
+			return $block;
+		}
+
+		$inner_blocks = array();
+		$kept_flags   = array();
+		foreach ( $block['innerBlocks'] as $child ) {
+			$kept         = is_array( $child ) ? $this->strip_navigation_block( $child ) : $child;
+			$kept_flags[] = null !== $kept;
+			if ( null !== $kept ) {
+				$inner_blocks[] = $kept;
+			}
+		}
+
+		// Each null in innerContent is the placeholder for the next inner block.
+		$inner_content = array();
+		$index         = 0;
+		foreach ( isset( $block['innerContent'] ) && is_array( $block['innerContent'] ) ? $block['innerContent'] : array() as $chunk ) {
+			if ( null === $chunk ) {
+				$keep = isset( $kept_flags[ $index ] ) ? $kept_flags[ $index ] : true;
+				++$index;
+				if ( ! $keep ) {
+					continue;
+				}
+			}
+			$inner_content[] = $chunk;
+		}
+
+		$block['innerBlocks']  = $inner_blocks;
+		$block['innerContent'] = $inner_content;
+
+		return $block;
+	}
+
+	/**
+	 * Removes a hidden post's identity from Navigation block attributes.
+	 *
+	 * @since 2.0.0
+	 *
+	 * @param array<string, mixed> $attrs Block attributes.
+	 * @return array<string, mixed>
+	 */
+	private function redact_navigation_attrs( array $attrs ) {
+		unset( $attrs['id'], $attrs['url'], $attrs['kind'], $attrs['type'], $attrs['title'], $attrs['description'] );
+		$attrs['label'] = __( '(Private post)', 'hide-a-post' );
+
+		return $attrs;
 	}
 
 	/**

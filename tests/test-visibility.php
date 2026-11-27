@@ -832,6 +832,85 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 	}
 
 	/**
+	 * Builds Navigation markup with a hidden-post submenu (with description) that
+	 * wraps a visible and a hidden link, plus a visible submenu wrapping a hidden link.
+	 *
+	 * @return string
+	 */
+	private function nested_navigation_markup() {
+		$link = static function ( $label, $id ) {
+			return sprintf(
+				'<!-- wp:navigation-link {"label":"%1$s","type":"post","kind":"post-type","id":%2$d,"url":"%3$s"} /-->',
+				$label,
+				$id,
+				get_permalink( $id )
+			);
+		};
+
+		return sprintf(
+			'<!-- wp:navigation-submenu {"label":"SecretParent","type":"post","kind":"post-type","id":%1$d,"url":"%2$s","description":"SecretDescription"} -->%3$s%4$s<!-- /wp:navigation-submenu --><!-- wp:navigation-submenu {"label":"PublicParent","type":"post","kind":"post-type","id":%5$d,"url":"%6$s"} -->%7$s%8$s<!-- /wp:navigation-submenu -->',
+			$this->posts['admin_secret'],
+			get_permalink( $this->posts['admin_secret'] ),
+			$link( 'PublicChild', $this->posts['admin_public'] ),
+			$link( 'SecretChild', $this->posts['admin_secret'] ),
+			$this->posts['editor_public'],
+			get_permalink( $this->posts['editor_public'] ),
+			$link( 'SecretChildTwo', $this->posts['admin_secret'] ),
+			$link( 'PublicChildTwo', $this->posts['editor_default'] )
+		);
+	}
+
+	/**
+	 * Nested hidden links are removed from Navigation REST content without
+	 * corrupting the serialized markup, and hidden submenus lose their description.
+	 *
+	 * @return void
+	 */
+	public function test_rest_navigation_strips_nested_hidden_links() {
+		$nav_id = self::factory()->post->create(
+			array(
+				'post_type'    => 'wp_navigation',
+				'post_status'  => 'publish',
+				'post_content' => $this->nested_navigation_markup(),
+			)
+		);
+
+		$request = new WP_REST_Request( 'GET', '/wp/v2/navigation/' . $nav_id );
+		$request->set_query_params( array( 'context' => 'embed' ) );
+		$raw = (string) rest_do_request( $request )->get_data()['content']['raw'];
+
+		foreach ( array( 'SecretParent', 'SecretDescription', 'SecretChild', '"url":"' . get_permalink( $this->posts['admin_secret'] ) . '"' ) as $needle ) {
+			$this->assertStringNotContainsString( $needle, $raw );
+		}
+		foreach ( array( 'PublicChild', 'PublicParent', 'PublicChildTwo', '(Private post)' ) as $needle ) {
+			$this->assertStringContainsString( $needle, $raw );
+		}
+
+		$blocks = parse_blocks( $raw );
+		$this->assertCount( 2, $blocks );
+		$this->assertCount( 1, $blocks[0]['innerBlocks'] );
+		$this->assertCount( 1, $blocks[1]['innerBlocks'] );
+	}
+
+	/**
+	 * Hidden-post submenus render without the post's label or URL, keeping visible children.
+	 *
+	 * @return void
+	 */
+	public function test_navigation_submenu_renders_redacted_for_visitors() {
+		$html = do_blocks( $this->nested_navigation_markup() );
+
+		$this->assertStringNotContainsString( 'SecretParent', $html );
+		$this->assertStringNotContainsString( 'SecretChild', $html );
+		$this->assertStringNotContainsString( get_permalink( $this->posts['admin_secret'] ), $html );
+		$this->assertStringContainsString( get_permalink( $this->posts['admin_public'] ), $html );
+		$this->assertStringContainsString( 'PublicParent', $html );
+
+		wp_set_current_user( $this->admin_id );
+		$this->assertStringContainsString( 'SecretParent', do_blocks( $this->nested_navigation_markup() ) );
+	}
+
+	/**
 	 * A visitor's page load never converts the classic menu into a saved (filtered)
 	 * Navigation post; an Administrator's does, with complete data.
 	 *
