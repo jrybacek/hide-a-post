@@ -67,6 +67,10 @@ Hidden posts are removed from post lists, search, feeds, sitemaps, archives, pre
 
 Yes. Use the `hap_user_can_view_hidden_posts` filter to grant or deny access per user, `hap_hide_admin_default_category_posts` to turn off the default-category rule, and `hap_administrator_ids` to change whose default-category posts are hidden.
 
+= How can I support Hide A Post? =
+
+Through [Buy Me a Coffee](https://www.buymeacoffee.com/jrybacek) or [PayPal](https://www.paypal.me/jrybacek).
+
 == Screenshots ==
 
 1. Posts as an Administrator

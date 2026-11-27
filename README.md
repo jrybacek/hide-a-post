@@ -1,5 +1,9 @@
 # Hide A Post
 
+[![CI](https://github.com/jrybacek/hide-a-post/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jrybacek/hide-a-post/actions/workflows/ci.yml?query=branch%3Amain)
+[![WordPress plugin version](https://img.shields.io/wordpress/plugin/v/hide-a-post?style=flat-square)](https://wordpress.org/plugins/hide-a-post/)
+[![WordPress tested up to](https://img.shields.io/wordpress/plugin/tested/hide-a-post?style=flat-square)](https://wordpress.org/plugins/hide-a-post/)
+[![PHP version](https://img.shields.io/wordpress/plugin/required-php/hide-a-post?style=flat-square)](https://wordpress.org/plugins/hide-a-post/)
 [![standard-readme compliant](https://img.shields.io/badge/readme%20style-standard-brightgreen.svg?style=flat-square)](https://github.com/richardlitt/standard-readme)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-%23FE5196?logo=conventionalcommits&logoColor=white&style=flat-square)](https://www.conventionalcommits.org/en/v1.0.0/)
 [![gitmoji](https://img.shields.io/badge/gitmoji-%20😜%20😍-FFDD67.svg?style=flat-square)](https://gitmoji.dev)
@@ -111,6 +115,8 @@ With **Awesome** and **Spicy** checked:
 ## Maintainers
 
 [@jrybacek](https://github.com/jrybacek)
+
+If Hide A Post is useful to you, you can support it through [Buy Me a Coffee](https://www.buymeacoffee.com/jrybacek) or [PayPal](https://www.paypal.me/jrybacek).
 
 ## Contributing
 
