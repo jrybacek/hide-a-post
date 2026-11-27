@@ -111,6 +111,12 @@ final class HAP_Plugin {
 		$this->query_filter->init();
 
 		add_action( 'delete_category', array( __CLASS__, 'prune_deleted_category' ) );
+
+		if ( is_multisite() ) {
+			// Migrate sites that are queried via switch_to_blog() before their first load.
+			add_action( 'switch_blog', array( __CLASS__, 'maybe_upgrade' ), 10, 0 );
+		}
+
 		add_filter( 'plugin_action_links_' . HAP_BASENAME, array( $this, 'add_action_links' ) );
 
 		if ( is_admin() ) {

@@ -485,4 +485,138 @@ class HAP_Test_Visibility extends WP_UnitTestCase {
 
 		$this->assertTrue( is_404() );
 	}
+
+	/**
+	 * REST routes match case-insensitively in core, so the guard must too.
+	 *
+	 * @return void
+	 */
+	public function test_rest_mixed_case_routes_return_404_for_hidden_items() {
+		$hidden_comment = self::factory()->comment->create( array( 'comment_post_ID' => $this->posts['admin_secret'] ) );
+
+		$this->assertSame( 404, rest_do_request( new WP_REST_Request( 'GET', '/wp/v2/Posts/' . $this->posts['admin_secret'] ) )->get_status() );
+		$this->assertSame( 404, rest_do_request( new WP_REST_Request( 'GET', '/WP/V2/POSTS/' . $this->posts['admin_secret'] ) )->get_status() );
+		$this->assertSame( 404, rest_do_request( new WP_REST_Request( 'GET', '/wp/v2/Comments/' . $hidden_comment ) )->get_status() );
+	}
+
+	/**
+	 * A query-string `id` overrides the route ID in WP_REST_Request, so it is checked too.
+	 *
+	 * @return void
+	 */
+	public function test_rest_id_parameter_cannot_override_route_id() {
+		$hidden_comment  = self::factory()->comment->create( array( 'comment_post_ID' => $this->posts['admin_secret'] ) );
+		$visible_comment = self::factory()->comment->create( array( 'comment_post_ID' => $this->posts['admin_public'] ) );
+
+		$request = new WP_REST_Request( 'GET', '/wp/v2/posts/' . $this->posts['admin_public'] );
+		$request->set_query_params( array( 'id' => $this->posts['admin_secret'] ) );
+		$this->assertSame( 404, rest_do_request( $request )->get_status() );
+
+		$request = new WP_REST_Request( 'GET', '/wp/v2/comments/' . $visible_comment );
+		$request->set_query_params( array( 'id' => $hidden_comment ) );
+		$this->assertSame( 404, rest_do_request( $request )->get_status() );
+	}
+
+	/**
+	 * A visible post's own comment feed still works (no posts-table join there).
+	 *
+	 * @return void
+	 */
+	public function test_singular_comment_feed_for_visible_post_works() {
+		global $wpdb;
+
+		$comment = self::factory()->comment->create( array( 'comment_post_ID' => $this->posts['admin_public'] ) );
+
+		$this->go_to( add_query_arg( 'feed', 'rss2', get_permalink( $this->posts['admin_public'] ) ) );
+
+		$this->assertTrue( is_comment_feed() );
+		$this->assertSame( '', $wpdb->last_error );
+		$this->assertContains( $comment, array_map( 'intval', wp_list_pluck( (array) $GLOBALS['wp_query']->comments, 'comment_ID' ) ) );
+	}
+
+	/**
+	 * Non-post canonical redirects are kept even when the global post is hidden.
+	 *
+	 * @return void
+	 */
+	public function test_canonical_redirect_ignores_global_post_for_non_post_urls() {
+		$GLOBALS['post'] = get_post( $this->posts['admin_secret'] );
+
+		$url = home_url( '/' );
+
+		$this->assertSame( $url, apply_filters( 'redirect_canonical', $url, home_url( '/?foo=bar' ) ) );
+	}
+
+	/**
+	 * Revisions of hidden posts are blocked like their parent.
+	 *
+	 * @return void
+	 */
+	public function test_capabilities_block_revisions_of_hidden_posts() {
+		$revision = self::factory()->post->create(
+			array(
+				'post_type'   => 'revision',
+				'post_status' => 'inherit',
+				'post_parent' => $this->posts['admin_secret'],
+				'post_name'   => $this->posts['admin_secret'] . '-revision-v1',
+			)
+		);
+
+		$this->assertFalse( user_can( $this->editor_id, 'read_post', $revision ) );
+		$this->assertFalse( user_can( $this->editor_id, 'edit_post', $revision ) );
+		$this->assertTrue( user_can( $this->admin_id, 'read_post', $revision ) );
+	}
+
+	/**
+	 * Old-slug redirects do not reveal a renamed hidden post.
+	 *
+	 * @return void
+	 */
+	public function test_old_slug_redirect_excludes_hidden_posts() {
+		$this->assertSame( 0, apply_filters( 'old_slug_redirect_post_id', $this->posts['admin_secret'] ) );
+		$this->assertSame( $this->posts['admin_public'], apply_filters( 'old_slug_redirect_post_id', $this->posts['admin_public'] ) );
+	}
+
+	/**
+	 * Queries that set suppress_filters late in pre_get_posts are still filtered.
+	 *
+	 * @return void
+	 */
+	public function test_late_suppress_filters_is_still_filtered() {
+		$late = static function ( $query ) {
+			$query->set( 'suppress_filters', true );
+		};
+		add_action( 'pre_get_posts', $late, 999 );
+
+		$visible = $this->visible_ids();
+
+		remove_action( 'pre_get_posts', $late, 999 );
+
+		$this->assertSame( $this->ids( $this->non_admin_labels() ), $visible );
+	}
+
+	/**
+	 * Legacy settings on a subsite are migrated when another site switches to it.
+	 *
+	 * @return void
+	 */
+	public function test_switch_to_blog_migrates_legacy_settings() {
+		if ( ! is_multisite() ) {
+			$this->markTestSkipped( 'Multisite only.' );
+		}
+
+		$blog_id = self::factory()->blog->create();
+
+		switch_to_blog( $blog_id );
+		$category = self::factory()->category->create( array( 'name' => 'Legacy Secret' ) );
+		update_option( 'hap', array( 'categories' => 'Legacy Secret' ) );
+		delete_option( HAP_Plugin::DB_VERSION_OPTION );
+		restore_current_blog();
+
+		switch_to_blog( $blog_id );
+		$hidden = HAP_Plugin::get_hidden_category_ids();
+		restore_current_blog();
+
+		$this->assertSame( array( $category ), $hidden );
+	}
 }

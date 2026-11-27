@@ -58,17 +58,19 @@ final class HAP_Query_Filter {
 	public function init() {
 		// Post queries.
 		add_filter( 'posts_where', array( $this, 'filter_posts_where' ), 10, 2 );
-		add_action( 'pre_get_posts', array( $this, 'filter_unfiltered_query' ) );
+		// Runs last so it sees `suppress_filters` set by other pre_get_posts callbacks.
+		add_action( 'pre_get_posts', array( $this, 'filter_unfiltered_query' ), PHP_INT_MAX );
 
 		// Direct access by ID.
 		add_filter( 'map_meta_cap', array( $this, 'filter_map_meta_cap' ), 10, 4 );
 		add_filter( 'rest_request_before_callbacks', array( $this, 'filter_rest_request' ), 10, 3 );
-		add_filter( 'oembed_request_post_id', array( $this, 'filter_oembed_request_post_id' ) );
+		add_filter( 'oembed_request_post_id', array( $this, 'filter_requested_post_id' ) );
+		add_filter( 'old_slug_redirect_post_id', array( $this, 'filter_requested_post_id' ) );
 		add_filter( 'redirect_canonical', array( $this, 'filter_redirect_canonical' ) );
 
 		// Comments.
 		add_action( 'pre_get_comments', array( $this, 'filter_comment_query' ) );
-		add_filter( 'comment_feed_where', array( $this, 'filter_comment_feed_where' ) );
+		add_filter( 'comment_feed_where', array( $this, 'filter_comment_feed_where' ), 10, 2 );
 		add_filter( 'comments_open', array( $this, 'filter_comments_open' ), 10, 2 );
 
 		// Core SQL that bypasses WP_Query.
@@ -236,15 +238,21 @@ final class HAP_Query_Filter {
 		$this->is_filtering = true;
 
 		try {
+			// Query and body `id`/`parent` values take precedence over URL
+			// parameters in WP_REST_Request, so check every candidate ID.
 			$post_id = $this->match_route_id( $route, rest_get_route_for_post_type_items( 'post' ) );
 			if ( $post_id > 0 ) {
-				$post = get_post( $post_id );
-				if ( $post instanceof WP_Post && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
-					return new WP_Error(
-						'rest_post_invalid_id',
-						__( 'Invalid post ID.', 'hide-a-post' ),
-						array( 'status' => 404 )
-					);
+				$candidates = array( $post_id, $request->get_param( 'id' ), $request->get_param( 'parent' ) );
+				foreach ( $candidates as $candidate ) {
+					$candidate_id = HAP_Plugin::parse_positive_int( $candidate );
+					$post         = $candidate_id > 0 ? get_post( $candidate_id ) : null;
+					if ( $post instanceof WP_Post && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
+						return new WP_Error(
+							'rest_post_invalid_id',
+							__( 'Invalid post ID.', 'hide-a-post' ),
+							array( 'status' => 404 )
+						);
+					}
 				}
 
 				return $response;
@@ -252,14 +260,17 @@ final class HAP_Query_Filter {
 
 			$comment_id = $this->match_route_id( $route, '/wp/v2/comments' );
 			if ( $comment_id > 0 ) {
-				$comment = get_comment( $comment_id );
-				$post    = $comment instanceof WP_Comment ? get_post( (int) $comment->comment_post_ID ) : null;
-				if ( $post instanceof WP_Post && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
-					return new WP_Error(
-						'rest_comment_invalid_id',
-						__( 'Invalid comment ID.', 'hide-a-post' ),
-						array( 'status' => 404 )
-					);
+				foreach ( array( $comment_id, $request->get_param( 'id' ) ) as $candidate ) {
+					$candidate_id = HAP_Plugin::parse_positive_int( $candidate );
+					$comment      = $candidate_id > 0 ? get_comment( $candidate_id ) : null;
+					$post         = $comment instanceof WP_Comment ? get_post( (int) $comment->comment_post_ID ) : null;
+					if ( $post instanceof WP_Post && $this->should_filter_for_current_user() && $this->is_post_hidden( $post ) ) {
+						return new WP_Error(
+							'rest_comment_invalid_id',
+							__( 'Invalid comment ID.', 'hide-a-post' ),
+							array( 'status' => 404 )
+						);
+					}
 				}
 			}
 		} finally {
@@ -270,14 +281,14 @@ final class HAP_Query_Filter {
 	}
 
 	/**
-	 * Prevents the oEmbed endpoint from describing hidden posts.
+	 * Prevents the oEmbed endpoint and old-slug redirects from resolving hidden posts.
 	 *
 	 * @since 2.0.0
 	 *
-	 * @param int $post_id Post ID resolved from the requested URL.
+	 * @param int $post_id Post ID resolved from the requested URL or old slug.
 	 * @return int
 	 */
-	public function filter_oembed_request_post_id( $post_id ) {
+	public function filter_requested_post_id( $post_id ) {
 		$post_id = HAP_Plugin::parse_positive_int( $post_id );
 		if ( 0 === $post_id || $this->is_filtering ) {
 			return $post_id;
@@ -319,7 +330,9 @@ final class HAP_Query_Filter {
 			}
 
 			// The guard is active, so url_to_postid() resolves hidden posts too.
-			$post = get_post( url_to_postid( $redirect_url ) );
+			// Skip 0: get_post( 0 ) falls back to the global $post.
+			$post_id = url_to_postid( $redirect_url );
+			$post    = $post_id > 0 ? get_post( $post_id ) : null;
 			if ( $post instanceof WP_Post && $this->is_post_hidden( $post ) ) {
 				return false;
 			}
@@ -371,11 +384,18 @@ final class HAP_Query_Filter {
 	 *
 	 * @since 2.0.0
 	 *
-	 * @param string $where Comment feed WHERE clause (the posts table is joined).
+	 * @param string   $where Comment feed WHERE clause.
+	 * @param WP_Query $query Query that produced the feed.
 	 * @return string
 	 */
-	public function filter_comment_feed_where( $where ) {
+	public function filter_comment_feed_where( $where, $query = null ) {
 		global $wpdb;
+
+		// Singular comment feeds do not join the posts table, and their post
+		// has already passed the visibility filter.
+		if ( $query instanceof WP_Query && $query->is_singular() ) {
+			return $where;
+		}
 
 		return $this->append_condition( $where, $wpdb->posts );
 	}
@@ -607,7 +627,8 @@ final class HAP_Query_Filter {
 			}
 		}
 
-		wp_cache_set( $cache_key, $hidden_ids, self::CACHE_GROUP );
+		// Keys change with every post or term edit, so expire obsolete lists.
+		wp_cache_set( $cache_key, $hidden_ids, self::CACHE_GROUP, DAY_IN_SECONDS );
 
 		return $hidden_ids;
 	}
@@ -621,6 +642,16 @@ final class HAP_Query_Filter {
 	 * @return bool
 	 */
 	private function is_post_hidden( WP_Post $post ) {
+		// Core maps revision capabilities to the parent post inline, without
+		// re-running map_meta_cap, so resolve revisions here.
+		if ( 'revision' === $post->post_type && $post->post_parent > 0 ) {
+			$parent = get_post( (int) $post->post_parent );
+			if ( ! ( $parent instanceof WP_Post ) ) {
+				return false;
+			}
+			$post = $parent;
+		}
+
 		if ( 'post' !== $post->post_type ) {
 			return false;
 		}
@@ -768,7 +799,8 @@ final class HAP_Query_Filter {
 			return 0;
 		}
 
-		if ( 1 === preg_match( '#^' . preg_quote( untrailingslashit( $base ), '#' ) . '/(\d+)(?:/|$)#', $route, $matches ) ) {
+		// Case-insensitive, like WP_REST_Server::match_request_to_handler().
+		if ( 1 === preg_match( '#^' . preg_quote( untrailingslashit( $base ), '#' ) . '/(\d+)(?:/|$)#i', $route, $matches ) ) {
 			return HAP_Plugin::parse_positive_int( $matches[1] );
 		}
 
