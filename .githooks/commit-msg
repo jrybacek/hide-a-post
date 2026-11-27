@@ -1,0 +1,60 @@
+#!/usr/bin/env sh
+# Validate commit messages follow the combined Gitmoji + Conventional Commits format:
+#   <gitmoji> <type>[optional (<scope>)][optional !]: <description>
+
+commit_msg_file="$1"
+header="$(head -n 1 "$commit_msg_file" | tr -d '\r')"
+
+# Allow standard Git-generated commits
+case "$header" in
+  "Merge "*|"Revert "*|"fixup! "*|"squash! "*|"amend! "*)
+    exit 0
+    ;;
+esac
+
+# Split leading gitmoji token from the conventional commit part
+prefix="${header%% *}"
+rest="${header#* }"
+
+# Ensure there was a space separating prefix and the rest
+if [ "$prefix" = "$header" ] || [ -z "$prefix" ] || [ -z "$rest" ]; then
+  prefix=""
+fi
+
+# Validate prefix is either a :shortcode: or a UTF-8 emoji (non-ASCII bytes only)
+prefix_ok=0
+if printf '%s\n' "$prefix" | LC_ALL=C grep -Eq '^:[a-z0-9_+-]+:$'; then
+  prefix_ok=1
+elif [ -n "$prefix" ] && printf '%s\n' "$prefix" | LC_ALL=C grep -Eq '^[^ -~]+$'; then
+  prefix_ok=1
+fi
+
+# Validate the Conventional Commits v1.0.0 header
+types="feat|fix|security|perf|refactor|docs|style|test|build|ci|chore|revert"
+rest_ok=0
+if printf '%s\n' "$rest" | LC_ALL=C grep -Eq "^(${types})(\([a-zA-Z0-9_./-]+\))?!?: .+$"; then
+  rest_ok=1
+fi
+
+if [ "$prefix_ok" -eq 1 ] && [ "$rest_ok" -eq 1 ]; then
+  exit 0
+fi
+
+cat >&2 <<'EOF'
+Error: Commit message does not match the Gitmoji + Conventional Commits format.
+
+Expected:
+  <gitmoji> <type>[optional (<scope>)][optional !]: <description>
+
+Allowed types:
+  feat, fix, security, perf, refactor, docs, style, test, build, ci, chore, revert
+
+Examples:
+  ✨ feat(settings): add category checkboxes
+  🐛 fix(wp-cli): handle missing option in posts_where
+  📝 docs(readme): update installation instructions
+  🔧 chore(changelog): configure git-cliff
+
+See CONTRIBUTING.md for the full Gitmoji mapping.
+EOF
+exit 1

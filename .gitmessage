@@ -1,0 +1,20 @@
+# <gitmoji> <type>(<scope>): <description>
+#
+# Common Gitmoji + Conventional Commit prefixes:
+#   ✨ feat:      New feature
+#   🐛 fix:       Bug fix
+#   🚑️ fix:       Critical hotfix
+#   🔒️ security:  Security fix
+#   ⚡️ perf:      Performance improvement
+#   ♻️ refactor:  Code refactoring
+#   📝 docs:      Documentation only
+#   💄 style:     Formatting / UI styling
+#   ✅ test:      Tests
+#   📦️ build:     Build / dependencies
+#   👷 ci:        CI/CD changes
+#   🔧 chore:     Tooling / config / maintenance
+#   ⏪️ revert:    Revert previous commit
+#   💥 feat!:     Breaking change
+#
+# Example:
+#   🐛 fix(wp-cli): prevent fatal TypeError when listing posts
