@@ -1,0 +1,68 @@
+name: Bug report
+description: Hide A Post doesn't work as documented.
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Can someone who isn't an Administrator see a hidden post?** That is a security issue. Don't file it here. [Report it privately](https://github.com/jrybacek/hide-a-post/security/advisories/new) instead.
+
+        Check the [known limitations](https://github.com/jrybacek/hide-a-post#limitations) first.
+  - type: input
+    id: plugin-version
+    attributes:
+      label: Hide A Post version
+      placeholder: "2.0.0"
+    validations:
+      required: true
+  - type: input
+    id: wp-version
+    attributes:
+      label: WordPress version
+      placeholder: "7.1"
+    validations:
+      required: true
+  - type: input
+    id: php-version
+    attributes:
+      label: PHP version
+      placeholder: "8.5"
+    validations:
+      required: true
+  - type: dropdown
+    id: multisite
+    attributes:
+      label: Multisite?
+      options:
+        - "No"
+        - "Yes"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Which categories are hidden, which user role you were logged in as, and what you did.
+      placeholder: |
+        1. Hide the "Spicy" category.
+        2. Log in as an Editor.
+        3. Open ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: What you expected and what happened
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Theme and other active plugins
+      description: Caching, membership, and SEO plugins are the most likely to interact with Hide A Post.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Errors or debug.log output
+      render: shell

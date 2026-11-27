@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/jrybacek/hide-a-post/security/advisories/new
+    about: Hidden posts visible to non-Administrators. Report privately, not as an issue.
+  - name: WordPress.org support forum
+    url: https://wordpress.org/support/plugin/hide-a-post/
+    about: Questions about setting up or using the plugin.
